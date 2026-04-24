@@ -5,8 +5,8 @@
 ## 🚀 배포 (GitHub Pages)
 
 ```bash
-git clone https://github.com/ekoredu-maker/jc-edu-clinic.git
-cd jc-edu-clinic
+git clone https://github.com/ekoredu-maker/cb-edu-clinic.git
+cd cd-edu-clinic
 # 본 산출물 4개 파일 복사 후
 git add .
 git commit -m "V9.6 PWA Release"
