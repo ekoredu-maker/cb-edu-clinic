@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta name="theme-color" content="#6366f1">
-<title>학습클리닉 통합관리 V9.6</title>
+<title>충북학습클리닉 업무통합관리 V9.6</title>
 <link rel="manifest" href="./manifest.webmanifest">
 <link rel="apple-touch-icon" href="./icons/icon-192.png">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.8/dist/web/static/pretendard.css">
@@ -166,13 +166,13 @@ table.stat caption { font-size: 15px; font-weight:700; padding:10px; background:
 <!-- Login Overlay -->
 <div id="loginBg" class="login-bg">
   <div class="login-box">
-    <h2>🔐 학습클리닉 통합관리</h2>
+    <h2>🔐 충북학습클리닉업무통합관리</h2>
     <div class="form-group" style="margin-bottom:16px;">
       <label>관리자 비밀번호</label>
       <input type="password" id="loginPw" placeholder="기본값: 1111" onkeydown="if(event.key==='Enter')doLogin()">
     </div>
     <button class="btn btn-primary" style="width:100%;" onclick="doLogin()">로그인</button>
-    <div style="text-align:center; margin-top:16px; font-size:12px; color:var(--text-sub);">V9.6 PWA Edition</div>
+    <div style="text-align:center; margin-top:16px; font-size:12px; color:var(--text-sub);">충청북도교육청 V9.6 PWA Edition</div>
   </div>
 </div>
 
@@ -186,7 +186,7 @@ table.stat caption { font-size: 15px; font-weight:700; padding:10px; background:
       <div class="brand-icon">🎓</div>
       <div>
         <h1><span id="hdName">충북학습종합클리닉 거점센터</span></h1>
-        <div style="font-size:12px; color:var(--text-sub); margin-top:2px;">학습클리닉 통합관리 시스템 V9.6</div>
+        <div style="font-size:12px; color:var(--text-sub); margin-top:2px;">학습클리닉업무 통합관리 시스템 V9.6</div>
       </div>
     </div>
     <div class="user-info">
@@ -372,7 +372,7 @@ table.stat caption { font-size: 15px; font-weight:700; padding:10px; background:
   </section>
 
   <div class="footer">
-    학습클리닉 통합관리 V9.6 · PWA · <span id="verCheck"></span>
+    충북학습클리닉업무통합관리 V9.6 · PWA · <span id="verCheck"></span>
   </div>
 </div>
 
@@ -475,8 +475,8 @@ function defaultDB() {
   return {
     version: VERSION,
     cfg: {
-      center:'제천거점', office:'제천교육지원청', director:'',
-      regions:['제천','단양'],
+      center:'00거점', office:'00교육지원청', director:'',
+      regions:['00','00'],
       mask:'ooo', fee:30000,
       pwHash: null
     },
@@ -526,18 +526,18 @@ function loadDB() {
   if (!db.version) db.version = VERSION;
   if (!db.conflicts) db.conflicts = [];
   if (!db.logs) db.logs = [];
-  if (!db.cfg.regions) db.cfg.regions = ['제천','단양'];
+  if (!db.cfg.regions) db.cfg.regions = ['00','00'];
 }
 
 // ----- Migration from V9.5 -----
 function migrateFrom95(old) {
   const n = defaultDB();
   if (old.cfg) {
-    n.cfg.center   = old.cfg.cn || old.cfg.center || '제천거점';
+    n.cfg.center   = old.cfg.cn || old.cfg.center || '00거점';
     n.cfg.office   = old.cfg.en || old.cfg.office || '';
     n.cfg.director = old.cfg.dn || old.cfg.director || '';
     n.cfg.fee      = old.cfg.fp || old.cfg.fee || 30000;
-    n.cfg.regions  = ['제천','단양'];
+    n.cfg.regions  = ['00','00'];
     n.cfg.mask     = 'ooo';
   }
   // 지원단 마이그레이션
@@ -562,7 +562,7 @@ function migrateFrom95(old) {
       gr: s.gr || '', cls: s.cls || '',
       ar: s.ar || '',
       areas: migrateArea(s.ar),
-      region: '제천',
+      region: '00',
       supportTypes: ['afterschool'],
       scd: migrateScd(s.scd),
       diagTest: {done:false, dyslexia:false, borderline:false, adhd:false, testDate:'', testInst:''},
@@ -1627,7 +1627,7 @@ function statTableRegional(dispDate) {
 // [서식2] 지역별 지원현황
 function statTableRegion(dispDate) {
   const { supported } = calcPivots();
-  const regions = [...(db.cfg.regions||['제천','단양'])];
+  const regions = [...(db.cfg.regions||['00','00'])];
   let html = `<table class="stat"><caption>지역별 지원현황 (${esc(dispDate)})</caption>
     <thead>
       <tr><th rowspan="2">지역</th>
