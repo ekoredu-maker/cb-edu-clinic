@@ -368,7 +368,7 @@
   }
 
   var _origLoadVerify = window.loadVerify;
-  window.loadVerify = function(){
+  window._legacyLoadVerifyPerson = function(){
     injectVerifyModeTabs();
     var mode = window.__verMode || 'person';
     if(mode === 'date'){
@@ -493,7 +493,7 @@
     document.querySelectorAll('.ver-chk-'+sid).forEach(function(c){ c.checked = checked; });
   };
 
-  window.bulkVerifyByStf = async function(sid, newStatus){
+  window._legacyBulkVerifyByStf = async function(sid, newStatus){
     var chks = document.querySelectorAll('.ver-chk-'+sid);
     var allPending = [];
     chks.forEach(function(c){
@@ -894,39 +894,66 @@
     return result;
   };
 
-  // stable verify renderer: date-based verification only, no implicit mode switching
+  // stable verify renderer: supporter-based monthly verification
   window.loadVerify = function(){
     const ymEl = document.getElementById('ver-month');
     const filterEl = document.getElementById('ver-filter');
     const areaEl = document.getElementById('ver-area');
     if(!areaEl) return;
+
     const ym = (ymEl && ymEl.value) || (typeof thisMonth==='function' ? thisMonth() : new Date().toISOString().slice(0,7));
     if(ymEl && !ymEl.value) ymEl.value = ym;
     const filter = (filterEl && filterEl.value) || 'pending';
-    try{ if(typeof buildIndex==='function') buildIndex(); }catch(e){}
-    const rows = [];
-    (db.mat||[]).forEach(m=>{
-      (m.logs||[]).forEach(l=>{
-        try{ if(typeof ensureLogFields === 'function') ensureLogFields(l, m); }catch(e){}
+
+    try { if(typeof buildIndex==='function') buildIndex(); } catch(e){}
+
+    const byStf = {};
+    let totalLogs = 0;
+
+    (db.mat||[]).forEach(m => {
+      (m.logs||[]).forEach(l => {
+        try { if(typeof ensureLogFields === 'function') ensureLogFields(l, m); } catch(e){}
         if(!(l.date||'').startsWith(ym)) return;
+
         const s = l.status || 'conducted';
         if(filter !== 'all'){
           if(filter==='pending' && s!=='conducted') return;
           if(filter==='verified' && s!=='verified' && s!=='paid') return;
           if(filter==='rejected' && s!=='rejected') return;
         }
-        rows.push({m,l});
+
+        if(!byStf[m.stfId]) {
+          byStf[m.stfId] = { logs: [], pendingCnt: 0, verifiedCnt: 0 };
+        }
+        byStf[m.stfId].logs.push({m, l});
+        totalLogs++;
+
+        if(s === 'conducted') byStf[m.stfId].pendingCnt++;
+        else if(s === 'verified' || s === 'paid') byStf[m.stfId].verifiedCnt++;
       });
     });
-    if(rows.length===0){
-      areaEl.innerHTML = '<div style="padding:30px; text-align:center; color:var(--muted)">해당 조건의 실적이 없습니다</div>';
+
+    if(totalLogs === 0){
+      areaEl.innerHTML = '<div style="padding:30px; text-align:center; color:var(--muted)">해당 월에 조건과 일치하는 실적이 없습니다</div>';
       return;
     }
-    const html = '<table class="tbl"><thead><tr>'+ 
-      '<th style="width:30px"><input type="checkbox" id="ver-all" onchange="toggleVerAll(this)"></th>'+ 
-      '<th>날짜</th><th>지원단</th><th>학생/학급</th><th>유형</th><th>시간</th><th>지도내용</th><th>금액</th><th>상태</th><th>작업</th>'+ 
-      '</tr></thead><tbody>' + rows.map(r=>{
-        const stf = (window.IDX && IDX.stfById) ? IDX.stfById[r.m.stfId] : null;
+
+    const stfIds = Object.keys(byStf).sort((a,b) => {
+      const na = (window.IDX && IDX.stfById && IDX.stfById[a]) ? IDX.stfById[a].nm : '';
+      const nb = (window.IDX && IDX.stfById && IDX.stfById[b]) ? IDX.stfById[b].nm : '';
+      return na.localeCompare(nb);
+    });
+
+    let html = `<div style="font-size:12px; color:var(--muted); margin-bottom:12px">
+      👤 <b>개인별 월단위 검증</b> · 총 ${stfIds.length}명의 지원단 실적이 검색되었습니다.
+    </div>`;
+
+    stfIds.forEach(sid => {
+      const stf = (window.IDX && IDX.stfById) ? IDX.stfById[sid] : null;
+      const stfName = stf ? stf.nm : '알 수 없음';
+      const group = byStf[sid];
+
+      const rowsHtml = group.logs.map(r => {
         const stu = (window.IDX && IDX.stuById) ? IDX.stuById[r.m.stuId] : null;
         const amt = r.l.amount || (typeof calcLogAmount==='function' ? calcLogAmount(r.l) : 0);
         const s = r.l.status || 'conducted';
@@ -934,25 +961,102 @@
         const stLbl = ({conducted:'미검증',verified:'✅승인',rejected:'❌반려',canceled:'취소',paid:'지급완료'})[s] || s;
         const kindLbl = (r.l.kind||r.m.kind)==='class' ? '수업협력' : '학습코칭';
         const subject = stu ? stu.nm : (((r.m.classInfo||{}).gr||'') ? ('🏫 '+((r.m.classInfo||{}).gr||'')+'-'+((r.m.classInfo||{}).cls||'')+'반') : '-');
-        return '<tr>'+
-          '<td class="center"><input type="checkbox" class="ver-chk" data-mat="'+r.m.id+'" data-log="'+r.l.id+'"></td>'+
-          '<td>'+esc(r.l.date||'')+'</td>'+
-          '<td>'+esc(stf?stf.nm:'-')+'</td>'+
-          '<td>'+esc(subject)+'</td>'+
-          '<td>'+kindLbl+'</td>'+
-          '<td>'+esc(r.l.time||'')+'</td>'+
-          '<td style="font-size:12px">'+esc(r.l.topic||r.l.content||'')+'</td>'+
-          '<td class="ar">'+(s==='canceled'?'-':(typeof formatMoney==='function' ? formatMoney(amt) : String(amt)))+'</td>'+
-          '<td><span class="badge '+stColor+'">'+stLbl+'</span></td>'+
-          '<td>'+
-            (s==='conducted'
-              ? '<button class="btn btn-xs btn-success" onclick="verifyOne(\''+r.m.id+'\',\''+r.l.id+'\',\'verified\')">승인</button> ' +
-                '<button class="btn btn-xs btn-danger" onclick="verifyOne(\''+r.m.id+'\',\''+r.l.id+'\',\'rejected\')">반려</button>'
-              : '<button class="btn btn-xs btn-outline" onclick="verifyOne(\''+r.m.id+'\',\''+r.l.id+'\',\'conducted\')">되돌림</button>')+
-          '</td>'+
-        '</tr>';
-      }).join('') + '</tbody></table>';
+
+        return `<tr>
+          <td class="center"><input type="checkbox" class="ver-chk-${sid}" data-mat="${r.m.id}" data-log="${r.l.id}"></td>
+          <td>${esc(r.l.date||'')}</td>
+          <td>${esc(subject)}</td>
+          <td>${kindLbl}</td>
+          <td>${esc(r.l.time||'')}</td>
+          <td style="font-size:12px">${esc(r.l.topic||r.l.content||'')}</td>
+          <td class="ar">${s==='canceled'?'-':(typeof formatMoney==='function' ? formatMoney(amt) : String(amt))}</td>
+          <td><span class="badge ${stColor}">${stLbl}</span></td>
+          <td>
+            ${s==='conducted'
+              ? `<button class="btn btn-xs btn-success" onclick="verifyOne('${r.m.id}','${r.l.id}','verified')">승인</button>
+                 <button class="btn btn-xs btn-danger" onclick="verifyOne('${r.m.id}','${r.l.id}','rejected')">반려</button>`
+              : `<button class="btn btn-xs btn-outline" onclick="verifyOne('${r.m.id}','${r.l.id}','conducted')">되돌림</button>`}
+          </td>
+        </tr>`;
+      }).join('');
+
+      const panelId = 'ver-p-' + sid;
+      html += `
+        <div style="border:1px solid #e5e7eb; border-radius:8px; margin-bottom:12px; overflow:hidden">
+          <div style="display:flex; align-items:center; justify-content:space-between; padding:12px 14px; background:#f8fafc; cursor:pointer" onclick="document.getElementById('${panelId}').style.display = document.getElementById('${panelId}').style.display==='none'?'block':'none'">
+            <div>
+              <b style="font-size:15px; color:var(--text)">${esc(stfName)}</b>
+              <span class="badge bg-info" style="margin-left:8px">총 ${group.logs.length}건</span>
+              ${group.pendingCnt > 0 ? `<span class="badge" style="background:#fde68a; color:#92400e; margin-left:4px">미검증 ${group.pendingCnt}</span>` : ''}
+              ${group.verifiedCnt > 0 ? `<span class="badge bg-yes" style="margin-left:4px">승인 ${group.verifiedCnt}</span>` : ''}
+            </div>
+            <div style="display:flex; gap:6px" onclick="event.stopPropagation()">
+              <button class="btn btn-xs btn-outline" onclick="document.querySelectorAll('.ver-chk-${sid}').forEach(c=>c.checked=true)">전체선택</button>
+              <button class="btn btn-xs btn-outline" onclick="document.querySelectorAll('.ver-chk-${sid}').forEach(c=>c.checked=false)">해제</button>
+              <button class="btn btn-xs btn-success" onclick="window.bulkVerifyByStf('${sid}', 'verified')">✅ 선택항목 일괄 승인</button>
+            </div>
+          </div>
+          <div id="${panelId}" style="display:${group.pendingCnt > 0 ? 'block' : 'none'}; padding:0">
+            <table class="tbl" style="margin:0">
+              <thead>
+                <tr>
+                  <th style="width:30px">선택</th>
+                  <th>날짜</th><th>학생/학급</th><th>유형</th><th>시간</th><th>지도내용</th><th>금액</th><th>상태</th><th>개별작업</th>
+                </tr>
+              </thead>
+              <tbody>${rowsHtml}</tbody>
+            </table>
+          </div>
+        </div>`;
+    });
+
     areaEl.innerHTML = html;
+  };
+
+  window.bulkVerifyByStf = async function(sid, newStatus){
+    const chks = document.querySelectorAll('.ver-chk-' + sid);
+    const allPending = [];
+
+    chks.forEach(c => {
+      if(!c.checked) return;
+      const matId = c.dataset.mat;
+      const logId = c.dataset.log;
+      const m = (db.mat||[]).find(x => x.id === matId);
+      if(!m) return;
+      const l = (m.logs||[]).find(x => x.id === logId);
+      if(!l) return;
+      if(l.status !== 'conducted') return;
+      allPending.push({m, l});
+    });
+
+    if(allPending.length === 0){
+      if(typeof toast === 'function') toast('선택된 미검증 실적이 없습니다', 'warning');
+      return;
+    }
+
+    const label = newStatus === 'verified' ? '승인' : '반려';
+    if(!confirm('선택된 미검증 실적 ' + allPending.length + '건을 "' + label + '" 처리하시겠습니까?')) return;
+
+    const doneMats = new Set();
+    for(let i=0; i<allPending.length; i++){
+      const pair = allPending[i];
+      const m = pair.m;
+      const l = pair.l;
+      l.status = newStatus;
+      if(newStatus === 'verified'){
+        l.verifiedBy = (db.cfg && db.cfg.confirmer) || '담당 장학사';
+        l.verifiedAt = Date.now();
+        if(!l.amount && typeof calcLogAmount === 'function') l.amount = calcLogAmount(l);
+      }
+      if(!doneMats.has(m.id)){
+        try { if(typeof save === 'function') await save('mat', m); } catch(e){}
+        doneMats.add(m.id);
+      }
+    }
+
+    if(typeof toast === 'function') toast(allPending.length + '건 ' + label + ' 완료', 'success');
+    window.loadVerify();
+    if(typeof refreshDashboard === 'function') refreshDashboard();
   };
 
   // keep labels consistent after login/init

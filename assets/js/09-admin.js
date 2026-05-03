@@ -160,6 +160,13 @@ function importBackup(e){
 /* =============================================================
  * 엑셀 양식 다운로드/업로드
  * ============================================================= */
+function resolveAreaIdsFromLabels(value){
+  return String(value||'').split(',').map(x=>x.trim()).filter(Boolean).map(lbl=>{
+    const found = AREAS.find(a=>a.label===lbl || a.altLabel===lbl || (a.id===lbl));
+    return found ? found.id : null;
+  }).filter(Boolean);
+}
+
 function dlStaffTemplate(){
   if(typeof XLSX==='undefined'){ toast('엑셀 라이브러리 로딩 중','warning'); return; }
   const wb = XLSX.utils.book_new();
@@ -193,8 +200,7 @@ async function upStaff(e){
     try{
       if(!r.이름){ fail++; errors.push({row:r, reason:'이름 누락'}); continue; }
       if(db.stf.length >= 50){ fail++; errors.push({row:r, reason:'50명 초과'}); continue; }
-      const areas = String(r['지원영역(콤마)']||'').split(',').map(x=>x.trim()).filter(Boolean)
-        .map(lbl=>AREAS.find(a=>a.label===lbl)?.id).filter(Boolean);
+      const areas = resolveAreaIdsFromLabels(r['지원영역(콤마)']||'');
       const scd = String(r['활동시간(예:월 14:00-16:00,수 14:00-16:00)']||'').split(',').map(x=>{
         const m = x.trim().match(/^(.)[\s]+(\d{1,2}:\d{2})[\s]*[-~][\s]*(\d{1,2}:\d{2})$/);
         return m ? {d:m[1], s:m[2], e:m[3]} : null;
@@ -223,8 +229,7 @@ async function upStu(e){
     try{
       if(!r.이름){ fail++; continue; }
       if(db.stu.length >= 1500){ fail++; errors.push({row:r, reason:'1500명 초과'}); continue; }
-      const areas = String(r['지원영역(콤마)']||'').split(',').map(x=>x.trim()).filter(Boolean)
-        .map(lbl=>AREAS.find(a=>a.label===lbl)?.id).filter(Boolean);
+      const areas = resolveAreaIdsFromLabels(r['지원영역(콤마)']||'');
       const sts = String(r['지원유형(콤마)']||'방과후학습코칭').split(',').map(x=>x.trim()).filter(Boolean);
       const scdStr = r['희망시간(예:월 14:00-15:00)']||'';
       const scd = String(scdStr).split(',').map(x=>{
