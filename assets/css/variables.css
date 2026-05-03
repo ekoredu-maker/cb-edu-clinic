@@ -1,0 +1,20 @@
+:root {
+  --bg: #f5f7fb;
+  --card: #ffffff;
+  --line: #dce3ef;
+  --line-strong: #bac7da;
+  --text: #1d2735;
+  --muted: #5b6574;
+  --primary: #2457c5;
+  --primary-soft: #e8f0ff;
+  --success: #11885a;
+  --success-soft: #e7f7ef;
+  --danger: #c23939;
+  --danger-soft: #fdeaea;
+  --warning: #af7600;
+  --warning-soft: #fff7df;
+  --radius: 16px;
+  --shadow: 0 10px 30px rgba(18, 34, 66, 0.08);
+  --max-width: 1480px;
+  --font: "Malgun Gothic", "Apple SD Gothic Neo", Arial, sans-serif;
+}
