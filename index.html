@@ -1,0 +1,700 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="theme-color" content="#6366f1">
+<title>🎓 학습클리닉 통합관리 V11.3</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" type="image/png" href="icons/favicon.png">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard/dist/web/static/pretendard.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<link rel="stylesheet" href="assets/css/app.css">
+</head>
+<body>
+
+<!-- Login -->
+<div id="login-overlay">
+  <div class="login-card">
+    <h1>🎓 학습클리닉 통합관리</h1>
+    <p>충북학습종합클리닉센터<br><span style="font-size:11px">V11.3 GitHub Edition</span></p>
+    <input type="password" id="login-pw" placeholder="비밀번호" maxlength="20" autofocus>
+    <button onclick="doLogin()">로그인</button>
+    <p style="margin-top:12px; font-size:11px; color:var(--muted)">초기 비밀번호: 1111</p>
+  </div>
+</div>
+
+<!-- Header -->
+<div class="header" style="display:none" id="app-header">
+  <div class="header-left">
+    <h1 id="hdr-title">🎓 충북종합학습클리닉 업무관리 프로그램</h1>
+    <div class="sub" id="hdr-sub">V11.3 · 충북종합학습클리닉 업무관리 프로그램 · GitHub/PWA Edition</div>
+  </div>
+  <div class="header-right">
+    <span class="badge-storage" id="storage-badge">💾 IDB</span>
+    <button class="btn btn-outline btn-sm" onclick="exportBackup()">📥 백업</button>
+    <button class="btn btn-outline btn-sm" onclick="document.getElementById('f-restore').click()">📤 복원</button>
+    <input type="file" id="f-restore" hidden accept=".json" onchange="importBackup(event)">
+    <button class="btn btn-outline btn-sm" onclick="doLogout()">🚪 로그아웃</button>
+  </div>
+</div>
+
+<!-- Tabs -->
+<div class="tabs" style="display:none" id="app-tabs">
+  <button class="nav-btn active" data-tab="t1" onclick="goTab('t1',this)">1. 대시보드</button>
+  <button class="nav-btn" data-tab="t2" onclick="goTab('t2',this)">2. 지원단관리</button>
+  <button class="nav-btn" data-tab="t3" onclick="goTab('t3',this)">3. 학생관리</button>
+  <button class="nav-btn" data-tab="t4" onclick="goTab('t4',this)">4. 매칭</button>
+  <button class="nav-btn" data-tab="t5" onclick="goTab('t5',this)">5. 실적/검증</button>
+  <button class="nav-btn" data-tab="t6" onclick="goTab('t6',this)">6. 연수</button>
+  <button class="nav-btn" data-tab="t7" onclick="goTab('t7',this)">7. 통계</button>
+  <button class="nav-btn" data-tab="t8" onclick="goTab('t8',this)">8. 서식</button>
+  <button class="nav-btn" data-tab="t9" onclick="goTab('t9',this)">9. 설정</button>
+</div>
+
+<div class="container" id="app-body" style="display:none">
+
+  <!-- T1: Dashboard -->
+  <div id="t1" class="tab-content active">
+    <div class="panel">
+      <div class="panel-header">
+        <div class="panel-title">📊 대시보드</div>
+        <button class="btn btn-outline btn-sm" onclick="refreshDashboard()">🔄 새로고침</button>
+      </div>
+      <div class="stats-grid" id="stat-cards"></div>
+    </div>
+
+    <!-- 예산 집행 패널 -->
+    <div class="panel">
+      <div class="panel-header">
+        <div class="panel-title">💰 예산 집행 현황</div>
+        <span id="budget-pct" style="font-size:12px;color:var(--muted)"></span>
+      </div>
+      <div id="budget-cards" class="stats-grid" style="margin-bottom:12px"></div>
+      <div class="chart-grid">
+        <div class="chart-box"><div class="chart-title">예산 집행 비율</div><canvas id="chart-budget"></canvas></div>
+        <div class="chart-box"><div class="chart-title">영역별 예산 소진</div><canvas id="chart-budget-bar"></canvas></div>
+      </div>
+    </div>
+
+    <!-- 실적·매칭 차트 -->
+    <div class="panel">
+      <div class="panel-title">📈 운영 현황 분석</div>
+      <div class="chart-grid" style="margin-top:12px">
+        <div class="chart-box"><div class="chart-title">월별 실적 추이 (최근 12개월)</div><canvas id="chart-monthly"></canvas></div>
+        <div class="chart-box"><div class="chart-title">지원영역별 매칭 분포</div><canvas id="chart-area"></canvas></div>
+        <div class="chart-box"><div class="chart-title">지원단 활동량 TOP 10</div><canvas id="chart-top"></canvas></div>
+        <div class="chart-box"><div class="chart-title">검증 상태</div><canvas id="chart-verify"></canvas></div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-title">🚨 주요 알림</div>
+      <div id="alert-list" style="margin-top:12px"></div>
+    </div>
+  </div>
+
+  <!-- T2: 지원단 -->
+  <div id="t2" class="tab-content">
+    <div class="panel">
+      <div class="panel-header">
+        <div class="panel-title">👥 학습지원단 관리 (최대 50명)</div>
+        <div style="display:flex; gap:8px; flex-wrap:wrap">
+          <button class="btn btn-outline btn-sm" onclick="dlStaffTemplate()">📋 엑셀양식</button>
+          <input type="file" id="f-staff" hidden accept=".xlsx,.xls" onchange="upStaff(event)">
+          <button class="btn btn-info btn-sm" onclick="document.getElementById('f-staff').click()">📤 엑셀업로드</button>
+          <button class="btn btn-outline btn-sm" onclick="dlStaffList()">📥 엑셀다운로드</button>
+          <button class="btn btn-primary btn-sm" onclick="openStaffModal()">+ 지원단 등록</button>
+        </div>
+      </div>
+      <div class="tbl-search">
+        <input id="staff-search" placeholder="🔍 이름/연락처 검색" oninput="renStaff()">
+        <select id="staff-filter-area" onchange="renStaff()" style="padding:8px; border:1px solid var(--border); border-radius:8px; font-size:13px">
+          <option value="">전체 지원영역</option>
+        </select>
+      </div>
+      <div class="vscroll-wrap" id="staff-vscroll">
+        <div class="vscroll-inner" id="staff-inner"></div>
+      </div>
+      <div style="margin-top:8px; font-size:12px; color:var(--muted)" id="staff-count"></div>
+    </div>
+  </div>
+
+  <!-- T3: 학생 -->
+  <div id="t3" class="tab-content">
+    <div class="panel">
+      <div class="panel-header">
+        <div class="panel-title">🎒 학생 관리 (최대 1,500명)</div>
+        <div style="display:flex; gap:8px; flex-wrap:wrap">
+          <button class="btn btn-outline btn-sm" onclick="dlStuTemplate()">📋 엑셀양식</button>
+          <input type="file" id="f-stu" hidden accept=".xlsx,.xls" onchange="upStu(event)">
+          <button class="btn btn-info btn-sm" onclick="document.getElementById('f-stu').click()">📤 엑셀업로드</button>
+          <button class="btn btn-outline btn-sm" onclick="dlStuList()">📥 엑셀다운로드</button>
+          <button class="btn btn-primary btn-sm" onclick="openStuModal()">+ 학생 등록</button>
+        </div>
+      </div>
+      <div class="tbl-search">
+        <input id="stu-search" placeholder="🔍 이름/학교 검색" oninput="renStu()">
+        <select id="stu-filter-region" onchange="renStu()" style="padding:8px; border:1px solid var(--border); border-radius:8px; font-size:13px">
+          <option value="">전체 지역</option>
+        </select>
+        <select id="stu-filter-sctype" onchange="renStu()" style="padding:8px; border:1px solid var(--border); border-radius:8px; font-size:13px">
+          <option value="">전체 학교급</option>
+          <option value="초">초등</option>
+          <option value="중">중등</option>
+        </select>
+        <select id="stu-filter-support" onchange="renStu()" style="padding:8px; border:1px solid var(--border); border-radius:8px; font-size:13px">
+          <option value="">전체 지원유형</option>
+          <option value="방과후학습코칭">방과후학습코칭</option>
+          <option value="수업협력코칭">수업협력코칭</option>
+          <option value="심리진단">심리진단</option>
+          <option value="치료기관연계">치료기관연계</option>
+        </select>
+      </div>
+      <div class="vscroll-wrap" id="stu-vscroll">
+        <div class="vscroll-inner" id="stu-inner"></div>
+      </div>
+      <div style="margin-top:8px; font-size:12px; color:var(--muted)" id="stu-count"></div>
+    </div>
+  </div>
+
+  <!-- T4: 매칭 + 수업협력 -->
+  <div id="t4" class="tab-content">
+    <div class="panel">
+      <div class="subtabs">
+        <button class="subtab-btn active" onclick="goSubT4('coach',this)">📚 학습코칭 매칭</button>
+        <button class="subtab-btn" onclick="goSubT4('class',this)">🏫 수업협력 (학급단위)</button>
+      </div>
+
+      <!-- 학습코칭 서브탭 -->
+      <div id="sub-t4-coach" class="subtab-content active">
+        <div class="panel-header">
+          <div class="panel-title">🔗 학습코칭 매칭</div>
+          <div style="display:flex; gap:8px; flex-wrap:wrap">
+            <button class="btn btn-success btn-sm" onclick="autoMatch()">⚡ 자동매칭 실행</button>
+            <button class="btn btn-warning btn-sm" onclick="openConflictQueue()">⚠️ 충돌 큐 <span class="badge bg-danger" id="conflict-count">0</span></button>
+            <button class="btn btn-outline btn-sm" onclick="renMatch()">🔄 새로고침</button>
+          </div>
+        </div>
+        <div class="dd-container">
+          <div class="dd-col">
+            <div class="dd-header">👨‍🎓 매칭 대기 학생 <span class="badge bg-no" id="cnt-wait">0</span></div>
+            <div class="dd-list" id="dd-wait"></div>
+          </div>
+          <div class="dd-col" style="background:#eef2ff; border-color:#c7d2fe">
+            <div class="dd-header" style="color:var(--primary)">🔗 매칭 현황 <span class="badge bg-info" id="cnt-mat">0</span></div>
+            <div class="dd-list" id="dd-mat"></div>
+          </div>
+          <div class="dd-col" style="background:#f0fdf4; border-color:#bbf7d0">
+            <div class="dd-header" style="color:#059669">👩‍🏫 활동 지원단 <span class="badge bg-yes" id="cnt-stf">0</span></div>
+            <div class="dd-list" id="dd-stf"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 수업협력 서브탭 -->
+      <div id="sub-t4-class" class="subtab-content">
+        <div class="panel-header">
+          <div class="panel-title">🏫 수업협력 (학급 단위)</div>
+          <button class="btn btn-primary btn-sm" onclick="openClassMatchModal()">+ 수업협력 배정</button>
+        </div>
+        <div style="font-size:12px; color:var(--muted); margin:6px 0 14px">
+          학급(학교 × 학년 × 반) 단위로 지원단을 배정합니다. 시수는 학교급별 1교시 기준(초40/중45/고50분)으로 자동 산정됩니다.
+        </div>
+
+        <h4 style="margin:12px 0 8px; font-size:14px">📋 현재 수업협력 배정</h4>
+        <div id="cls-list" class="cls-grid"></div>
+
+        <h4 style="margin:20px 0 8px; font-size:14px">👩‍🏫 지원단별 수업협력 현황</h4>
+        <div style="overflow-x:auto">
+          <table class="tbl" id="cls-by-stf"><thead><tr>
+            <th>지원단</th><th>담당 학급수</th><th>총 교시/주</th><th>학교 목록</th>
+          </tr></thead><tbody></tbody></table>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- T5: 실적/검증 -->
+  <div id="t5" class="tab-content">
+    <div class="panel">
+      <div class="subtabs">
+        <button class="subtab-btn active" onclick="goSubT5('today',this)">📅 오늘의 실시기록</button>
+        <button class="subtab-btn" onclick="goSubT5('verify',this)">✅ 월간 검증</button>
+        <button class="subtab-btn" onclick="goSubT5('settle',this)">💰 월별 정산</button>
+      </div>
+
+      <!-- 오늘 실시기록 -->
+      <div id="sub-t5-today" class="subtab-content active">
+        <div class="panel-header">
+          <div class="panel-title">📅 오늘의 실시기록</div>
+          <div style="display:flex; gap:8px; flex-wrap:wrap">
+            <input type="date" id="rec-date" style="padding:8px; border:1px solid var(--border); border-radius:8px">
+            <button class="btn btn-primary btn-sm" onclick="loadTodayRec()">🔄 불러오기</button>
+            <button class="btn btn-success btn-sm" onclick="quickRecAll()">⚡ 모두 실시로 기록</button>
+          </div>
+        </div>
+        <div style="font-size:12px; color:var(--muted); margin:6px 0 14px">
+          선택한 날짜의 예정된 매칭을 표시합니다. 각 건별로 "실시/취소"를 기록할 수 있습니다.
+        </div>
+        <div id="rec-area"></div>
+      </div>
+
+      <!-- 월간 검증 -->
+      <div id="sub-t5-verify" class="subtab-content">
+        <div class="panel-header">
+          <div class="panel-title">✅ 월간 검증 (학습상담사)</div>
+          <div style="display:flex; gap:8px; flex-wrap:wrap">
+            <input type="month" id="ver-month" style="padding:8px; border:1px solid var(--border); border-radius:8px">
+            <select id="ver-filter" style="padding:8px; border:1px solid var(--border); border-radius:8px">
+              <option value="all">전체</option>
+              <option value="pending" selected>미검증</option>
+              <option value="verified">승인</option>
+              <option value="rejected">반려</option>
+            </select>
+            <button class="btn btn-primary btn-sm" onclick="loadVerify()">🔄 불러오기</button>
+            <button class="btn btn-success btn-sm" onclick="bulkVerify('verified')">✅ 일괄 승인</button>
+            <button class="btn btn-danger btn-sm" onclick="bulkVerify('rejected')">❌ 일괄 반려</button>
+          </div>
+        </div>
+        <div style="font-size:12px; color:var(--muted); margin:6px 0 14px">
+          실시 기록된 회기를 학습상담사가 검증합니다. 승인된 회기만 관리부·지급명세서에 반영됩니다.
+        </div>
+        <div id="ver-area"></div>
+      </div>
+
+      <!-- 월별 정산 -->
+      <div id="sub-t5-settle" class="subtab-content">
+        <div class="panel-header">
+          <div class="panel-title">💰 월별 정산</div>
+          <div style="display:flex; gap:8px; flex-wrap:wrap">
+            <input type="month" id="stl-month" style="padding:8px; border:1px solid var(--border); border-radius:8px">
+            <button class="btn btn-primary btn-sm" onclick="loadSettle()">📊 정산 집계</button>
+            <button class="btn btn-success btn-sm" onclick="printAllPaySlips()">🖨️ 전체 명세서 인쇄</button>
+          </div>
+        </div>
+        <div style="font-size:12px; color:var(--muted); margin:6px 0 14px">
+          승인된 회기만 집계합니다. 학습코칭(1회 40,000원) + 수업협력(1회 30,000원) + 연수 출장비 포함.
+        </div>
+        <div id="stl-area"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- T6: 연수 + 출장비 -->
+  <div id="t6" class="tab-content">
+    <div class="panel">
+      <div class="panel-header">
+        <div class="panel-title">📚 지원단 연수 관리 (출장비 자동산정)</div>
+        <button class="btn btn-primary btn-sm" onclick="openTrnModal()">+ 연수 등록</button>
+      </div>
+      <div style="font-size:12px; color:var(--muted); margin-bottom:12px; padding:10px; background:#fef3c7; border-radius:8px">
+        💡 출장비: 4시간 이상 참석 시 <b>20,000원</b>, 4시간 미만 시 <b>10,000원</b> 자동 산정<br>
+        💡 승인된 연수의 출장비는 예산 집행(출장비 항목)에 자동 반영됩니다
+      </div>
+      <div class="tbl-wrap">
+        <table class="tbl">
+          <thead><tr>
+            <th>일시</th><th>연수명</th><th>강사</th><th>시간</th><th>참석</th>
+            <th>출장비</th><th>상태</th><th style="width:260px">관리</th>
+          </tr></thead>
+          <tbody id="trn-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- T7: 통계 -->
+  <div id="t7" class="tab-content">
+    <div class="panel">
+      <div class="panel-header">
+        <div class="panel-title">📊 통계 서식 (엑셀 자동생성)</div>
+        <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap">
+          <label style="font-size:12px; color:var(--muted)">기준일</label>
+          <input type="date" id="stat-date" style="padding:8px; border:1px solid var(--border); border-radius:8px">
+          <select id="stat-type" style="padding:8px; border:1px solid var(--border); border-radius:8px">
+            <option value="quarter">분기별 보고</option>
+            <option value="month">월별 보고</option>
+          </select>
+          <button class="btn btn-success btn-sm" onclick="renderPivots()">🔄 통계 생성</button>
+          <button class="btn btn-info btn-sm" onclick="exportStatExcel()">📥 엑셀 다운로드</button>
+        </div>
+      </div>
+      <div id="pivot-area"></div>
+    </div>
+  </div>
+
+  <!-- T8: 서식 -->
+  <div id="t8" class="tab-content">
+    <div class="panel">
+      <div class="panel-title">📋 학습지원단 관리부 (출석부) <span class="badge" style="background:#fee2e2;color:#dc2626">핵심</span></div>
+      <p style="color:var(--muted); font-size:12px; margin:8px 0">지원단별 월 단위 활동 관리부를 자동 생성합니다. 실적 로그가 자동 반영됩니다.</p>
+      <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:end; margin-top:12px">
+        <div class="form-group" style="margin:0; min-width:200px">
+          <label>지원단 선택</label>
+          <select id="mgr-stf-sel"></select>
+        </div>
+        <div class="form-group" style="margin:0">
+          <label>대상 월</label>
+          <input type="month" id="mgr-ym" value="">
+        </div>
+        <div class="form-group" style="margin:0; min-width:160px">
+          <label>지원방식</label>
+          <select id="mgr-kind">
+            <option value="coach">📚 학습코칭</option>
+            <option value="class">🏫 수업협력</option>
+          </select>
+        </div>
+        <button class="btn btn-primary" onclick="renderMgrBook()">📖 관리부 생성</button>
+        <button class="btn btn-success" onclick="printMgrBook()">🖨️ 인쇄</button>
+        <button class="btn btn-outline" onclick="exportMgrBookXlsx()">📥 엑셀 다운로드</button>
+        <button class="btn btn-outline" onclick="renderMgrBookAll()">📚 전체 지원단 일괄</button>
+      </div>
+      <div id="mgr-book-area" style="margin-top:16px"></div>
+    </div>
+
+    <div class="panel" style="margin-top:16px">
+      <div class="panel-title">📅 시간표 출력 <span class="badge" style="background:#10b981;color:#fff">NEW</span></div>
+      <p style="color:var(--mute); font-size:13px; margin:8px 0">학생별·학교별·지원단별 주간 시간표를 생성합니다. 매칭의 시간 슬롯이 자동 반영됩니다.</p>
+
+      <div class="tabs" style="margin:12px 0">
+        <div class="tab active" onclick="switchTTMode('staff', this)">👨‍🏫 지원단별</div>
+        <div class="tab" onclick="switchTTMode('stu', this)">🎓 학생별</div>
+        <div class="tab" onclick="switchTTMode('sch', this)">🏫 학교별</div>
+      </div>
+
+      <div id="tt-controls-staff" class="tt-controls">
+        <div class="form-grid">
+          <div class="form-group">
+            <label>지원단 선택</label>
+            <select id="tt-sel-staff"><option value="all">-- 전체 (개인별 페이지) --</option></select>
+          </div>
+        </div>
+      </div>
+      <div id="tt-controls-stu" class="tt-controls" style="display:none">
+        <div class="form-grid">
+          <div class="form-group">
+            <label>학생 선택</label>
+            <select id="tt-sel-stu"><option value="all">-- 전체 (개인별 페이지) --</option></select>
+          </div>
+        </div>
+      </div>
+      <div id="tt-controls-sch" class="tt-controls" style="display:none">
+        <div class="form-grid">
+          <div class="form-group">
+            <label>학교 선택</label>
+            <select id="tt-sel-sch"><option value="all">-- 전체 학교 --</option></select>
+          </div>
+        </div>
+      </div>
+
+      <div style="display:flex; gap:8px; margin-top:12px; flex-wrap:wrap">
+        <button class="btn btn-primary" onclick="renderTT()">📅 시간표 생성</button>
+        <button class="btn btn-success" onclick="printTT()">🖨️ 인쇄</button>
+        <button class="btn btn-warn" onclick="exportTTXlsx()">📥 엑셀 다운로드</button>
+        <button class="btn btn-dark" onclick="exportTTListXlsx()">📋 명단형 엑셀</button>
+      </div>
+      <div id="tt-area" style="margin-top:16px"></div>
+    </div>
+
+    <div class="panel" style="margin-top:16px">
+      <div class="panel-title">💰 지급 명세서 (개인용) <span class="badge" style="background:#10b981;color:#fff">NEW</span></div>
+      <p style="color:var(--muted); font-size:12px; margin:8px 0">승인된 실적을 기준으로 지원단별 월 지급 명세서를 생성합니다. 학습코칭·수업협력·연수출장비가 자동 합산됩니다.</p>
+      <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:end">
+        <div class="form-group" style="margin:0; min-width:200px">
+          <label>지원단 선택</label>
+          <select id="pay-stf-sel"></select>
+        </div>
+        <div class="form-group" style="margin:0">
+          <label>대상 월</label>
+          <input type="month" id="pay-ym">
+        </div>
+        <button class="btn btn-primary" onclick="renderPaySlip()">💰 명세서 생성</button>
+        <button class="btn btn-success" onclick="printPaySlip()">🖨️ 새창 인쇄</button>
+        <button class="btn btn-outline" onclick="exportPaySlipXlsx()">📥 엑셀 다운로드</button>
+        <button class="btn btn-outline" onclick="renderPaySlipAll()">📚 전체 일괄</button>
+      </div>
+      <div id="pay-slip-area" style="margin-top:16px"></div>
+    </div>
+
+    <div class="panel" style="margin-top:16px">
+      <div class="panel-title">📑 센터 집행내역서 (K-에듀파인 업로드용) <span class="badge" style="background:#6366f1;color:#fff">NEW</span></div>
+      <p style="color:var(--muted); font-size:12px; margin:8px 0">센터 월별 전체 집행 내역을 생성합니다. 총액(세전) 기준.</p>
+      <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:end">
+        <div class="form-group" style="margin:0"><label>대상 월</label><input type="month" id="exec-ym"></div>
+        <button class="btn btn-primary" onclick="renderExecReport()">📑 집행내역서 생성</button>
+        <button class="btn btn-success" onclick="printExecReport()">🖨️ 새창 인쇄</button>
+        <button class="btn btn-outline" onclick="exportExecReportXlsx()">📥 엑셀 다운로드</button>
+      </div>
+      <div id="exec-area" style="margin-top:16px"></div>
+    </div>
+
+    <div class="panel" style="margin-top:16px">
+      <div class="panel-title">📄 행정 서식 (지원단 개별 발급)</div>
+      <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:end; margin-top:12px">
+        <div class="form-group" style="margin:0; min-width:220px">
+          <label>지원단 선택</label>
+          <select id="form-stf-sel"><option value="">(지원단을 선택하세요)</option></select>
+        </div>
+        <button class="btn btn-outline" onclick="openForm('staff-appoint')">🎖️ 위촉장</button>
+        <button class="btn btn-outline" onclick="openForm('appoint-confirm')">📜 위촉확인서</button>
+        <button class="btn btn-outline" onclick="openForm('career-confirm')">🗂️ 경력확인서(누적)</button>
+        <button class="btn btn-outline" onclick="openForm('resign')">🪶 해촉신청서</button>
+        <button class="btn btn-outline" onclick="openForm('plan-doc')">📋 학습지도계획서</button>
+      </div>
+      <div id="form-preview" style="margin-top:20px"></div>
+    </div>
+  </div>
+
+  <!-- T9: 설정 -->
+  <div id="t9" class="tab-content">
+    <div class="panel">
+      <div class="panel-title">⚙️ 기본 설정</div>
+      <div class="form-grid" style="margin-top:16px">
+        <div class="form-group"><label>기관명</label><input id="cfg-org" placeholder="예: 충청북도청주교육지원청"></div>
+        <div class="form-group"><label>센터명</label><input id="cfg-base" placeholder="예: 청주센터"></div>
+        <div class="form-group"><label>관할 지역 (콤마구분)</label>
+          <input id="cfg-regions" placeholder="예: 청주,청원 (콤마로 구분)">
+          <div style="margin-top:4px; font-size:11px; color:var(--muted)">
+            💡 충북 프리셋: <a href="javascript:void(0)" onclick="setRegionPreset('청주')" style="color:#6366f1">청주센터</a> ·
+            <a href="javascript:void(0)" onclick="setRegionPreset('충주')" style="color:#6366f1">충주센터</a> ·
+            <a href="javascript:void(0)" onclick="setRegionPreset('제천')" style="color:#6366f1">제천센터(제천·단양)</a> ·
+            <a href="javascript:void(0)" onclick="setRegionPreset('보은')" style="color:#6366f1">보은센터(보은·옥천·영동)</a> ·
+            <a href="javascript:void(0)" onclick="setRegionPreset('진천')" style="color:#6366f1">진천센터(진천·증평·괴산·음성)</a>
+          </div>
+        </div>
+        <div class="form-group"><label>담당장학사</label><input id="cfg-admin" placeholder="예: 홍길동 장학사"></div>
+        <div class="form-group"><label>담당 확인자 (담당장학사 또는 과장)</label><input id="cfg-confirmer" placeholder="예: 담당 장학사 또는 과장" value="담당 장학사"></div>
+        <div class="form-group">
+          <label>이름 마스킹 모드 (공문출력)</label>
+          <select id="cfg-mask">
+            <option value="full">실명 표시</option>
+            <option value="ooo">OOO (기본)</option>
+            <option value="partial">홍OO (부분)</option>
+            <option value="alias">가명 사용</option>
+          </select>
+        </div>
+        <div class="form-group"><label>비밀번호 변경</label><input type="password" id="cfg-pw" placeholder="새 비밀번호(4자 이상)"></div>
+        <div class="form-group">
+          <label>저장소 모드</label>
+          <select id="cfg-storage">
+            <option value="auto">자동 (권장)</option>
+            <option value="idb">IndexedDB 강제</option>
+            <option value="ls">localStorage 강제</option>
+          </select>
+        </div>
+      </div>
+      <button class="btn btn-primary" onclick="saveCfg()">💾 설정 저장</button>
+
+      <h3 style="margin-top:30px; font-size:14px; color:var(--primary)">💰 단가 · 예산 관리 <span class="badge" style="background:#10b981;color:#fff">NEW</span></h3>
+      <div class="form-grid" style="margin-top:12px">
+        <div class="form-group"><label>학습코칭 1회(50분) 단가(원)</label><input type="number" id="cfg-rate-coach" value="40000"></div>
+        <div class="form-group"><label>수업협력 1교시 단가(원)</label><input type="number" id="cfg-rate-class" value="30000"></div>
+        <div class="form-group"><label>출장비 - 4시간 이상(원)</label><input type="number" id="cfg-rate-travel-long" value="20000"></div>
+        <div class="form-group"><label>출장비 - 4시간 미만(원)</label><input type="number" id="cfg-rate-travel-short" value="10000"></div>
+        <div class="form-group"><label>원천징수율 (%) · 명세서 표시용</label><input type="number" id="cfg-tax" value="3.3" step="0.1"></div>
+      </div>
+
+      <h4 style="margin-top:20px; font-size:13px">📅 연간 예산 (2026)</h4>
+      <div class="form-grid" style="margin-top:8px">
+        <div class="form-group"><label>연간 총예산(원)</label><input type="number" id="cfg-bud-total" value="0"></div>
+        <div class="form-group"><label>└ 학습코칭 예산(원)</label><input type="number" id="cfg-bud-coach" value="0"></div>
+        <div class="form-group"><label>└ 수업협력 예산(원)</label><input type="number" id="cfg-bud-class" value="0"></div>
+        <div class="form-group"><label>└ 연수 출장비 예산(원)</label><input type="number" id="cfg-bud-travel" value="0"></div>
+      </div>
+      <button class="btn btn-primary" onclick="saveRatesAndBudget()" style="margin-top:8px">💾 단가·예산 저장</button>
+
+      <!-- 테스트 데이터 (개발자 모드 전용) -->
+      <div id="test-data-zone" style="display:none">
+        <h3 style="margin-top:30px; font-size:14px">🧪 테스트 데이터 <span class="badge" style="background:#f59e0b;color:#fff">개발자 모드 전용</span></h3>
+        <p style="color:var(--muted); font-size:12px; margin:8px 0">기능 확인용 샘플 데이터를 생성합니다. 기존 데이터는 유지됩니다.</p>
+        <div style="display:flex; gap:8px; flex-wrap:wrap">
+          <button class="btn btn-primary btn-sm" onclick="genDummy(10,50)">🧪 테스트 데이터 (지원단 10 / 학생 50)</button>
+          <button class="btn btn-danger btn-sm" onclick="clearDummy()">더미 데이터만 삭제</button>
+        </div>
+        <div id="dev-zone" style="margin-top:12px; padding:12px; background:#fff7ed; border:1px dashed #f59e0b; border-radius:6px">
+          <h3 style="margin:0 0 8px; font-size:13px; color:#b45309">🔧 개발자 모드 (?dev=1)</h3>
+          <div style="display:flex; gap:8px; flex-wrap:wrap">
+            <button class="btn btn-outline btn-sm" onclick="genDummy(50,500)">중규모 (지원단 50 / 학생 500)</button>
+            <button class="btn btn-warning btn-sm" onclick="genDummy(50,1500)">⚡ 풀스케일 (지원단 50 / 학생 1,500)</button>
+          </div>
+        </div>
+      </div>
+
+      <h3 style="margin-top:30px; font-size:14px; color:var(--danger)">⚠️ 위험 영역</h3>
+      <button class="btn btn-danger btn-sm" onclick="resetAll()">🗑️ 전체 데이터 초기화</button>
+    </div>
+  </div>
+
+</div>
+
+<footer>
+  © 2026 충북종합학습클리닉 업무관리 프로그램 · V11.3 GitHub Edition
+</footer>
+
+<!-- Toast -->
+<div id="toast-container"></div>
+
+<!-- Staff Modal -->
+<div class="modal-bg" id="modal-staff">
+  <div class="modal">
+    <div class="modal-header">
+      <div class="modal-title" id="staff-modal-title">지원단 등록</div>
+      <button class="modal-close" onclick="closeModal('modal-staff')">×</button>
+    </div>
+    <div class="form-grid">
+      <div class="form-group"><label>이름*</label><input id="sf-nm"></div>
+      <div class="form-group"><label>연락처</label><input id="sf-ph" placeholder="[PHONE_NUMBER]"></div>
+      <div class="form-group"><label>생년월일</label><input type="date" id="sf-bd"></div>
+      <div class="form-group">
+        <label>상태</label>
+        <select id="sf-st"><option value="active">활동중</option><option value="pause">휴식</option><option value="end">종료</option></select>
+      </div>
+    </div>
+    <div class="form-group"><label>담당 지원영역 (복수선택)</label>
+      <div class="chk-group" id="sf-areas"></div>
+    </div>
+    <div class="form-group"><label>활동 가능 시간 (요일·시간대)</label>
+      <div class="slot-list" id="sf-slots"></div>
+      <button class="btn btn-sm btn-outline" onclick="addSlot('sf-slots')" style="margin-top:6px">+ 시간대 추가</button>
+    </div>
+    <div class="form-grid" style="margin-top:8px">
+      <div class="form-group"><label>위촉 시작일</label><input type="date" id="sf-ap-start" onchange="autoSetApEnd()"></div>
+      <div class="form-group"><label>위촉 종료일</label><input type="date" id="sf-ap-end"></div>
+      <div class="form-group"><label>위촉 분야</label>
+        <select id="sf-ap-area">
+          <option value="학습코칭">학습코칭</option>
+          <option value="수업협력코칭">수업협력코칭</option>
+          <option value="학습코칭+수업협력">학습코칭 + 수업협력</option>
+        </select>
+      </div>
+      <div class="form-group"><label>해촉일 (있을 경우)</label><input type="date" id="sf-resign"></div>
+    </div>
+    <div class="form-group"><label>해촉 사유</label><input id="sf-resign-reason" placeholder="해촉시 입력"></div>
+    <div class="form-group"><label>비고</label><textarea id="sf-ds" rows="2"></textarea></div>
+    <div style="display:flex; gap:8px; justify-content:flex-end; margin-top:16px">
+      <button class="btn btn-outline" onclick="closeModal('modal-staff')">취소</button>
+      <button class="btn btn-primary" onclick="saveStaff()">저장</button>
+    </div>
+  </div>
+</div>
+
+<!-- Student Modal -->
+<div class="modal-bg" id="modal-stu">
+  <div class="modal" style="max-width:720px">
+    <div class="modal-header">
+      <div class="modal-title" id="stu-modal-title">학생 등록</div>
+      <button class="modal-close" onclick="closeModal('modal-stu')">×</button>
+    </div>
+    <div class="form-grid">
+      <div class="form-group"><label>이름*</label><input id="st-nm"></div>
+      <div class="form-group"><label>가명(공문용)</label><input id="st-alias" placeholder="미입력 시 자동"></div>
+      <div class="form-group"><label>성별</label><select id="st-gen"><option value="남">남</option><option value="여">여</option></select></div>
+      <div class="form-group"><label>지역*</label><select id="st-region"></select></div>
+      <div class="form-group"><label>학교명*</label><input id="st-sc"></div>
+      <div class="form-group"><label>학교급*</label><select id="st-sctype"><option value="초">초등</option><option value="중">중등</option></select></div>
+      <div class="form-group"><label>학년</label><input type="number" id="st-gr" min="1" max="6"></div>
+      <div class="form-group"><label>반</label><input type="number" id="st-cls" min="1"></div>
+      <div class="form-group"><label>우선순위(1~5)</label><input type="number" id="st-pri" min="1" max="5" value="3"></div>
+    </div>
+    <div class="form-group"><label>희망 지원유형 (복수선택)</label>
+      <div class="chk-group" id="st-stypes"></div>
+    </div>
+    <div class="form-group"><label>지원영역 (복수선택)</label>
+      <div class="chk-group" id="st-areas"></div>
+    </div>
+    <div id="st-etc-wrap" style="display:none" class="form-group">
+      <label>기타 영역 상세 *</label>
+      <input id="st-etc-detail" placeholder="예: 선택적 함묵증">
+    </div>
+    <fieldset style="border:1px solid var(--border); padding:12px; border-radius:8px; margin-bottom:12px">
+      <legend style="padding:0 8px; font-size:12px; color:var(--muted)">진단 정보 (난독/ADHD/경계선 지원 시 필수)</legend>
+      <div class="form-grid">
+        <div class="form-group"><label><input type="checkbox" id="st-diag-done"> 진단검사 실시</label></div>
+        <div class="form-group"><label><input type="checkbox" id="st-diag-dys"> 난독증 확진</label></div>
+        <div class="form-group"><label><input type="checkbox" id="st-diag-adhd"> ADHD 확진</label></div>
+        <div class="form-group"><label><input type="checkbox" id="st-diag-border"> 경계선지능 확진</label></div>
+        <div class="form-group"><label>진단일</label><input type="date" id="st-diag-date"></div>
+        <div class="form-group"><label>진단기관</label><input id="st-diag-inst"></div>
+      </div>
+    </fieldset>
+    <fieldset style="border:1px solid var(--border); padding:12px; border-radius:8px; margin-bottom:12px">
+      <legend style="padding:0 8px; font-size:12px; color:var(--muted)">치료기관연계 (해당 시)</legend>
+      <div class="form-grid">
+        <div class="form-group"><label>연계 기관명</label><input id="st-therapy-inst"></div>
+        <div class="form-group"><label>지원 시작일</label><input type="date" id="st-therapy-start"></div>
+        <div class="form-group"><label>지원 종료일</label><input type="date" id="st-therapy-end"></div>
+      </div>
+    </fieldset>
+    <fieldset style="border:1px solid var(--border); padding:12px; border-radius:8px; margin-bottom:12px">
+      <legend style="padding:0 8px; font-size:12px; color:var(--muted)">미지원 처리 (해당 시)</legend>
+      <div class="form-grid">
+        <div class="form-group"><label><input type="checkbox" id="st-unsup-is"> 미지원</label></div>
+        <div class="form-group" style="grid-column:span 2"><label>미지원 사유</label><input id="st-unsup-reason" placeholder="예: 학부모 거부"></div>
+      </div>
+    </fieldset>
+    <div class="form-group"><label>희망 시간대 (요일·시간)</label>
+      <div class="slot-list" id="st-slots"></div>
+      <button class="btn btn-sm btn-outline" onclick="addSlot('st-slots')" style="margin-top:6px">+ 시간대 추가</button>
+    </div>
+    <div style="display:flex; gap:8px; justify-content:flex-end; margin-top:16px">
+      <button class="btn btn-outline" onclick="closeModal('modal-stu')">취소</button>
+      <button class="btn btn-primary" onclick="saveStu()">저장</button>
+    </div>
+  </div>
+</div>
+
+<!-- Training Modal -->
+<div class="modal-bg" id="modal-trn">
+  <div class="modal">
+    <div class="modal-header">
+      <div class="modal-title">연수 등록</div>
+      <button class="modal-close" onclick="closeModal('modal-trn')">×</button>
+    </div>
+    <div class="form-grid">
+      <div class="form-group"><label>연수명*</label><input id="tr-nm"></div>
+      <div class="form-group"><label>일시*</label><input type="datetime-local" id="tr-dt"></div>
+      <div class="form-group"><label>강사</label><input id="tr-lect"></div>
+      <div class="form-group"><label>이수시간</label><input type="number" id="tr-hr" value="2" step="0.5"></div>
+      <div class="form-group" style="grid-column:span 2"><label>장소</label><input id="tr-loc"></div>
+    </div>
+    <div class="form-group"><label>참석자 (체크)</label>
+      <div class="chk-group" id="tr-attendees" style="max-height:200px; overflow-y:auto"></div>
+    </div>
+    <div class="form-group"><label>비고</label><textarea id="tr-memo" rows="2"></textarea></div>
+    <div style="display:flex; gap:8px; justify-content:flex-end; margin-top:16px">
+      <button class="btn btn-outline" onclick="closeModal('modal-trn')">취소</button>
+      <button class="btn btn-primary" onclick="saveTrn()">저장</button>
+    </div>
+  </div>
+</div>
+
+<!-- Conflict Queue Modal -->
+<div class="modal-bg" id="modal-conflict">
+  <div class="modal" style="max-width:800px">
+    <div class="modal-header">
+      <div class="modal-title">⚠️ 매칭 충돌 수동 조정 큐</div>
+      <button class="modal-close" onclick="closeModal('modal-conflict')">×</button>
+    </div>
+    <div id="conflict-list"></div>
+  </div>
+</div>
+
+<script src="assets/js/00-core.js"></script>
+<script src="assets/js/01-dashboard.js"></script>
+<script src="assets/js/02-supporters.js"></script>
+<script src="assets/js/03-students.js"></script>
+<script src="assets/js/04-matching.js"></script>
+<script src="assets/js/05-training.js"></script>
+<script src="assets/js/06-statistics.js"></script>
+<script src="assets/js/07-validation.js"></script>
+<script src="assets/js/08-forms.js"></script>
+<script src="assets/js/09-admin.js"></script>
+<script src="assets/js/10-ext-v99.js"></script>
+<script src="assets/js/11-ext-v10.js"></script>
+<script src="assets/js/12-patches.js"></script>
+</body>
+</html>
