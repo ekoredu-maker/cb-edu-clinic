@@ -24,13 +24,23 @@ from domain.verification import verify_records
 from domain.settlement import build_settlement
 from runtime_paths import frontend_root, generated_dir, template_dir
 from services.document_context import execution_context, settlement_context
-from services.document_model import execution_report_model, manager_book_model, pay_slip_model
+from services.document_model import (
+    appointment_confirmation_model,
+    career_confirmation_model,
+    execution_report_model,
+    learning_plan_model,
+    manager_book_model,
+    pay_slip_model,
+    resignation_model,
+    staff_appointment_model,
+    timetable_model,
+)
 from services.excel_service import create_execution_xlsx, create_manager_book_xlsx, create_pay_slip_xlsx
 from services.format_contract import list_format_contracts
 from services.hwpx_native_service import NativeHwpxError, create_native_hwpx
 from services.hwpx_service import HwpxTemplateError, create_from_template
 
-app = FastAPI(title="CB Edu Clinic V13 Hybrid Engine", version="13.0.0-alpha14")
+app = FastAPI(title="CB Edu Clinic V13 Hybrid Engine", version="13.0.0-alpha15")
 
 app.add_middleware(
     CORSMiddleware,
@@ -50,7 +60,18 @@ HWPX_TEMPLATES = {
     "manager_book": "manager_book.hwpx",
     "operation_report": "operation_report.hwpx",
 }
-NATIVE_HWPX_KEYS = {"pay_slip", "execution_report", "manager_book"}
+NATIVE_HWPX_KEYS = {
+    "pay_slip",
+    "execution_report",
+    "manager_book",
+    "staff_appoint",
+    "appoint_confirm",
+    "career_confirm",
+    "resign",
+    "plan_doc",
+    "timetable",
+}
+MONTHLY_HWPX_KEYS = {"pay_slip", "execution_report", "manager_book"}
 
 OFFLINE_ASSETS = {
     "chartjs": FRONTEND_DIR / "assets" / "vendor" / "chart.umd.js",
@@ -88,7 +109,7 @@ def health() -> dict:
     return {
         "ok": True,
         "engine": "python",
-        "version": "13.0.0-alpha14",
+        "version": "13.0.0-alpha15",
         "templates": template_status,
         "formatContracts": {key: True for key in format_contracts},
         "nativeHwpx": {
@@ -236,16 +257,21 @@ def export_manager_book_xlsx(payload: dict):
     return FileResponse(out, filename=filename, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
 
-def _native_model(template_key: str, state: dict, ym: str, staff_id: str, settlement_result: dict):
+def _native_model(template_key: str, state: dict, payload: dict, settlement_result: dict | None):
     cfg = state.get("cfg") or {}
     staff_map = _staff_by_id(state)
+    ym = str(payload.get("ym") or "")
+    staff_id = str(payload.get("staffId") or "")
+
     if template_key == "pay_slip":
         staff = staff_map.get(staff_id)
         if not staff:
             raise HTTPException(status_code=404, detail="지원단 정보를 찾을 수 없습니다.")
-        return pay_slip_model(settlement_result, staff, staff_id, ym, cfg.get("org") or ""), f"지급명세서_{_safe_name(staff.get('nm',''))}_{ym}.hwpx"
+        result = settlement_result or build_settlement({"state": state, "ym": ym})
+        return pay_slip_model(result, staff, staff_id, ym, cfg.get("org") or ""), f"지급명세서_{_safe_name(staff.get('nm',''))}_{ym}.hwpx"
     if template_key == "execution_report":
-        return execution_report_model(settlement_result, staff_map, ym, cfg.get("org") or ""), f"월별집행내역_{ym}.hwpx"
+        result = settlement_result or build_settlement({"state": state, "ym": ym})
+        return execution_report_model(result, staff_map, ym, cfg.get("org") or ""), f"월별집행내역_{ym}.hwpx"
     if template_key == "manager_book":
         staff = staff_map.get(staff_id)
         if not staff:
@@ -255,45 +281,89 @@ def _native_model(template_key: str, state: dict, ym: str, staff_id: str, settle
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         return model, f"관리부_{_safe_name(staff.get('nm',''))}_{ym}.hwpx"
+
+    try:
+        if template_key == "staff_appoint":
+            staff = staff_map.get(staff_id)
+            if not staff:
+                raise ValueError("지원단 정보를 찾을 수 없습니다.")
+            return staff_appointment_model(state, staff_id), f"위촉장_{_safe_name(staff.get('nm',''))}.hwpx"
+        if template_key == "appoint_confirm":
+            staff = staff_map.get(staff_id)
+            if not staff:
+                raise ValueError("지원단 정보를 찾을 수 없습니다.")
+            return appointment_confirmation_model(state, staff_id), f"위촉확인서_{_safe_name(staff.get('nm',''))}.hwpx"
+        if template_key == "career_confirm":
+            staff = staff_map.get(staff_id)
+            if not staff:
+                raise ValueError("지원단 정보를 찾을 수 없습니다.")
+            return career_confirmation_model(state, staff_id), f"경력확인서_{_safe_name(staff.get('nm',''))}.hwpx"
+        if template_key == "resign":
+            staff = staff_map.get(staff_id)
+            if not staff:
+                raise ValueError("지원단 정보를 찾을 수 없습니다.")
+            model = resignation_model(
+                state,
+                staff_id,
+                resign_date=str(payload.get("resignDate") or ""),
+                resign_reason=str(payload.get("resignReason") or ""),
+                detail_reason=str(payload.get("detailReason") or ""),
+            )
+            return model, f"해촉신청서_{_safe_name(staff.get('nm',''))}.hwpx"
+        if template_key == "plan_doc":
+            staff = staff_map.get(staff_id) if staff_id else None
+            suffix = _safe_name((staff or {}).get("nm") or "빈서식")
+            return learning_plan_model(state, staff_id), f"학습지도계획서_{suffix}.hwpx"
+        if template_key == "timetable":
+            mode = str(payload.get("mode") or "staff")
+            target_id = str(payload.get("targetId") or "")
+            model = timetable_model(state, mode, target_id)
+            return model, f"시간표_{_safe_name(model.get('title') or target_id)}.hwpx"
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
     raise HTTPException(status_code=409, detail="이 서식은 실제 HWPX 템플릿이 필요합니다.")
 
 
 @app.post("/api/export/{template_key}.hwpx")
 def export_hwpx(template_key: str, payload: dict):
-    filename = HWPX_TEMPLATES.get(template_key)
-    if not filename:
+    template_filename = HWPX_TEMPLATES.get(template_key)
+    if template_key not in NATIVE_HWPX_KEYS and not template_filename:
         raise HTTPException(status_code=404, detail="지원하지 않는 HWPX 서식입니다.")
 
     state = _state(payload)
     ym = str(payload.get("ym") or "")
     staff_id = str(payload.get("staffId") or "")
-    if not ym:
+    if template_key in MONTHLY_HWPX_KEYS and not ym:
         raise HTTPException(status_code=400, detail="ym이 필요합니다.")
+
     cfg = state.get("cfg") or {}
-    settlement_result = build_settlement({"state": state, "ym": ym})
-    template = TEMPLATE_DIR / filename
+    settlement_result = build_settlement({"state": state, "ym": ym}) if template_key in {"pay_slip", "execution_report"} else None
+    template = (TEMPLATE_DIR / template_filename) if template_filename else None
 
     try:
-        if template.exists():
+        if template is not None and template.exists():
             if template_key == "pay_slip":
                 staff = _staff_by_id(state).get(staff_id)
                 if not staff:
                     raise HTTPException(status_code=404, detail="지원단 정보를 찾을 수 없습니다.")
-                context = settlement_context(settlement_result, staff_id, ym, cfg.get("org") or "", cfg.get("confirmer") or "")
+                result = settlement_result or build_settlement({"state": state, "ym": ym})
+                context = settlement_context(result, staff_id, ym, cfg.get("org") or "", cfg.get("confirmer") or "")
                 context["STAFF_NAME"] = staff.get("nm") or ""
                 out_name = f"지급명세서_{_safe_name(staff.get('nm',''))}_{ym}.hwpx"
             elif template_key == "execution_report":
-                context = execution_context(settlement_result, ym, cfg.get("org") or "")
+                result = settlement_result or build_settlement({"state": state, "ym": ym})
+                context = execution_context(result, ym, cfg.get("org") or "")
                 out_name = f"월별집행내역_{ym}.hwpx"
             else:
                 context = {"YM": ym, "ORG": cfg.get("org") or "", "CONFIRMER": cfg.get("confirmer") or ""}
-                out_name = f"{template_key}_{ym}.hwpx"
+                out_name = f"{template_key}_{ym or 'output'}.hwpx"
             out = GENERATED_DIR / out_name
             create_from_template(template, out, context)
         else:
             if template_key not in NATIVE_HWPX_KEYS:
-                raise HTTPException(status_code=409, detail=f"HWPX 원본 템플릿이 필요합니다: {filename}")
-            model, out_name = _native_model(template_key, state, ym, staff_id, settlement_result)
+                raise HTTPException(status_code=409, detail=f"HWPX 원본 템플릿이 필요합니다: {template_filename}")
+            model, out_name = _native_model(template_key, state, payload, settlement_result)
             out = GENERATED_DIR / out_name
             create_native_hwpx(out, model)
     except (HwpxTemplateError, NativeHwpxError) as exc:
