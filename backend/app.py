@@ -9,7 +9,16 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 
 from database.db import init_db
-from database.state_store import StateMigrationError, export_state, import_state, status as storage_status
+from database.state_store import (
+    StateMigrationError,
+    compare_state,
+    delete_record,
+    export_state,
+    import_state,
+    save_singleton,
+    status as storage_status,
+    upsert_record,
+)
 from domain.statistics import build_statistics
 from domain.verification import verify_records
 from domain.settlement import build_settlement
@@ -17,7 +26,7 @@ from services.document_context import execution_context, settlement_context
 from services.excel_service import create_execution_xlsx, create_pay_slip_xlsx
 from services.hwpx_service import HwpxTemplateError, create_from_template
 
-app = FastAPI(title="CB Edu Clinic V13 Hybrid Engine", version="13.0.0-alpha5")
+app = FastAPI(title="CB Edu Clinic V13 Hybrid Engine", version="13.0.0-alpha6")
 
 app.add_middleware(
     CORSMiddleware,
@@ -52,6 +61,10 @@ def _staff_by_id(state: dict) -> dict[str, dict]:
     return {str(s.get("id")): s for s in (state.get("stf") or []) if s.get("id") is not None}
 
 
+def _migration_error(exc: StateMigrationError) -> HTTPException:
+    return HTTPException(status_code=422, detail=str(exc))
+
+
 @app.on_event("startup")
 def startup() -> None:
     init_db()
@@ -66,7 +79,7 @@ def health() -> dict:
     return {
         "ok": True,
         "engine": "python",
-        "version": "13.0.0-alpha5",
+        "version": "13.0.0-alpha6",
         "templates": template_status,
         "storage": storage_status(),
     }
@@ -89,8 +102,55 @@ def storage_import(payload: dict) -> dict:
             replace=bool(payload.get("replace", True)),
         )
     except StateMigrationError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
+        raise _migration_error(exc) from exc
     return {**result, "storage": storage_status()}
+
+
+@app.post("/api/storage/upsert")
+def storage_upsert(payload: dict) -> dict:
+    try:
+        return upsert_record(
+            str(payload.get("entityType") or ""),
+            payload.get("record"),
+            source=str(payload.get("source") or "dual-write"),
+        )
+    except StateMigrationError as exc:
+        raise _migration_error(exc) from exc
+
+
+@app.post("/api/storage/delete")
+def storage_delete(payload: dict) -> dict:
+    try:
+        return delete_record(
+            str(payload.get("entityType") or ""),
+            str(payload.get("id") or ""),
+            source=str(payload.get("source") or "dual-write"),
+        )
+    except StateMigrationError as exc:
+        raise _migration_error(exc) from exc
+
+
+@app.post("/api/storage/singleton")
+def storage_singleton(payload: dict) -> dict:
+    try:
+        return save_singleton(
+            str(payload.get("key") or ""),
+            payload.get("value"),
+            source=str(payload.get("source") or "dual-write"),
+        )
+    except StateMigrationError as exc:
+        raise _migration_error(exc) from exc
+
+
+@app.post("/api/storage/compare")
+def storage_compare(payload: dict) -> dict:
+    state = payload.get("state")
+    if state is None:
+        raise HTTPException(status_code=400, detail="state가 필요합니다.")
+    try:
+        return compare_state(state)
+    except StateMigrationError as exc:
+        raise _migration_error(exc) from exc
 
 
 @app.get("/api/storage/export")
