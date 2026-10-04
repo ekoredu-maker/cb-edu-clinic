@@ -27,7 +27,7 @@ from services.document_context import execution_context, settlement_context
 from services.excel_service import create_execution_xlsx, create_pay_slip_xlsx
 from services.hwpx_service import HwpxTemplateError, create_from_template
 
-app = FastAPI(title="CB Edu Clinic V13 Hybrid Engine", version="13.0.0-alpha10")
+app = FastAPI(title="CB Edu Clinic V13 Hybrid Engine", version="13.0.0-alpha11")
 
 app.add_middleware(
     CORSMiddleware,
@@ -46,6 +46,12 @@ HWPX_TEMPLATES = {
     "execution_report": "execution_report.hwpx",
     "manager_book": "manager_book.hwpx",
     "operation_report": "operation_report.hwpx",
+}
+
+OFFLINE_ASSETS = {
+    "chartjs": FRONTEND_DIR / "assets" / "vendor" / "chart.umd.js",
+    "sheetjs": FRONTEND_DIR / "assets" / "vendor" / "xlsx.full.min.js",
+    "versions": FRONTEND_DIR / "assets" / "vendor" / "versions.json",
 }
 
 
@@ -76,11 +82,16 @@ def health() -> dict:
         key: (TEMPLATE_DIR / filename).exists()
         for key, filename in HWPX_TEMPLATES.items()
     }
+    offline_status = {key: path.exists() for key, path in OFFLINE_ASSETS.items()}
     return {
         "ok": True,
         "engine": "python",
-        "version": "13.0.0-alpha10",
+        "version": "13.0.0-alpha11",
         "templates": template_status,
+        "offline": {
+            "ready": all(offline_status.values()),
+            "assets": offline_status,
+        },
         "storage": storage_status(),
     }
 
