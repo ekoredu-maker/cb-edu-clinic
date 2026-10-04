@@ -8,6 +8,12 @@ Python 엔진의 `services/format_contract.py`가 HTML 서식의 제목, 메타�
 - `pay_slip` : 활동비 지급 명세서 (`legacy-js/10-ext-v99.js`)
 - `execution_report` : 월별 활동비 집행내역서 (`legacy-js/10-ext-v99.js`)
 - `manager_book` : 학습지원단 관리부 (`legacy-js/08-forms.js`)
+- `staff_appoint` : 위촉장 (`legacy-js/12-patches.js`)
+- `appoint_confirm` : 위촉 확인서 (`legacy-js/12-patches.js`)
+- `career_confirm` : 경력 확인서 (`legacy-js/12-patches.js`)
+- `resign` : 해촉 신청서 (`legacy-js/12-patches.js`)
+- `plan_doc` : 학습지도계획서 (`legacy-js/08-forms.js`)
+- `timetable` : 주간 시간표 (`legacy-js/08-forms.js`)
 
 ## 출력 우선순위
 1. 실제 HWPX 원본 템플릿이 존재하면 원본 서식을 보존하는 템플릿 매퍼 사용
@@ -18,6 +24,19 @@ Python 엔진의 `services/format_contract.py`가 HTML 서식의 제목, 메타�
 - 지급명세서
 - 월별 집행내역서
 - 학습지원단 관리부
+- 위촉장
+- 위촉확인서
+- 경력확인서
+- 해촉신청서
+- 학습지도계획서
+- 주간시간표
+
+## HTML과 Python 이름표시 규칙
+문서출력은 `legacy-js/00-core.js`의 `maskName`과 동일한 규칙을 사용합니다.
+- `full`: 실명
+- `ooo`: `OOO`
+- `partial`: 성 첫 글자 + `OO`
+- `alias`: 학생 별칭, 없으면 학생 ID 끝 4자리
 
 ## HWPX 네이티브 구조검사
 자동시험에서는 다음을 검증합니다.
@@ -31,8 +50,21 @@ Python 엔진의 `services/format_contract.py`가 HTML 서식의 제목, 메타�
 - `version.xml`
 - section에 구역설정(`secPr`)과 표가 존재하는지
 - 서식계약과 표 열 수/행 수가 일치하는지
+- 시간표가 월~일 8열, 08:00~22:00 30분 단위인지
+- 가로서식의 페이지 방향이 반영되는지
 
-이 구조검사는 통과했습니다. 다만 **실제 한컴오피스에서 열기·편집·인쇄까지 검증한 것은 아닙니다.** 한컴 렌더러 호환성은 Windows 로컬 UAT에서 최종 확정합니다.
+이 구조검사는 자동화되어 있습니다. 다만 **실제 한컴오피스에서 열기·편집·인쇄까지의 렌더링 호환성은 별도 Windows 로컬 UAT로 최종 확정합니다.**
+
+## 한컴오피스 UAT 샘플
+`backend/hwpx_uat_pack.py`가 실제 개인정보를 사용하지 않고 위 9종의 합성 HWPX를 생성합니다.
+
+GitHub Actions에서는 `V13_HWPX_Hancom_UAT_Samples` 아티팩트로 업로드하며 다음을 수기 확인합니다.
+- 경고 없이 열리는지
+- 한글/숫자가 깨지지 않는지
+- 셀 너비와 줄바꿈이 적절한지
+- 페이지 방향과 쪽 나눔이 자연스러운지
+- 인쇄 미리보기가 업무서식으로 사용 가능한지
+- 저장 후 다시 열어도 문서가 유지되는지
 
 ## 실제 HWPX 템플릿을 추가할 경우
 권장 파일명:
