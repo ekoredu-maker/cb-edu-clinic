@@ -7,6 +7,7 @@ import { installDocumentExports } from './hybrid/document-export.js';
 import { installStorageMigrationControls } from './hybrid/storage-migration.js';
 import { installDualWrite, installDualWriteTools, compareDualWrite } from './hybrid/dual-write.js';
 import { installAuthoritativeEngine } from './hybrid/authoritative-engine.js';
+import { installReadSourceTools, chooseReadSource } from './hybrid/read-source.js';
 
 bootStoreDevtools();
 installStatisticsOverrides();
@@ -15,6 +16,7 @@ installRegressionTools();
 installDocumentExports();
 installStorageMigrationControls();
 installDualWriteTools();
+installReadSourceTools();
 
 subscribe(({ event }) => {
   if (event.startsWith('persist:')) console.debug('[V13 store event]', event);
@@ -34,6 +36,7 @@ window.addEventListener('load', async () => {
   let storageLabel = '';
   let syncLabel = '';
   let sourceLabel = '';
+  let dataLabel = ' · 데이터원본 Browser';
 
   if (PythonBridge.isAvailable()) {
     try {
@@ -46,6 +49,11 @@ window.addEventListener('load', async () => {
         const stored = health.storage?.totalRecords || 0;
         storageLabel = ` · SQLite ${stored}건`;
         window.__V13_STORAGE_STATUS__ = health.storage || null;
+
+        const readSource = await chooseReadSource();
+        if (readSource.source === 'sqlite') dataLabel = ' · 데이터원본 SQLite';
+        else if (readSource.source === 'browser-fallback') dataLabel = ' · 데이터원본 Browser(복구모드)';
+        else dataLabel = ' · 데이터원본 Browser';
 
         if (health.storage?.lastMigration) {
           installDualWrite();
@@ -70,10 +78,11 @@ window.addEventListener('load', async () => {
       console.warn('[V13] Python engine connection/regression failed:', e);
       hybridLabel = 'Hybrid/Offline';
       sourceLabel = ' · 계산원본 JS';
+      dataLabel = ' · 데이터원본 Browser(복구모드)';
     }
   }
 
-  setHeader([`V13.0 Alpha · ${hybridLabel}`, regressionLabel, sourceLabel, templateLabel, storageLabel, syncLabel]);
+  setHeader([`V13.0 Alpha · ${hybridLabel}`, regressionLabel, sourceLabel, dataLabel, templateLabel, storageLabel, syncLabel]);
   document.title = '학습클리닉 통합관리 V13.0 Alpha';
 
   window.addEventListener('v13:dual-write-status', (event) => {
@@ -82,6 +91,15 @@ window.addEventListener('load', async () => {
     const current = document.getElementById('hdr-sub')?.textContent || '';
     const cleaned = current.replace(/ · DB동기화 (PASS|확인필요|저장중)/g, '').replace(/ · DB동기화 확인필요/g, '');
     const label = s.pending > 0 ? ' · DB동기화 저장중' : (s.healthy ? ' · DB동기화 PASS' : ' · DB동기화 확인필요');
+    const badge = document.getElementById('hdr-sub');
+    if (badge) badge.textContent = cleaned + label;
+  });
+
+  window.addEventListener('v13:read-source-status', (event) => {
+    const s = event.detail || {};
+    const current = document.getElementById('hdr-sub')?.textContent || '';
+    const cleaned = current.replace(/ · 데이터원본 (SQLite|Browser|Browser\(복구모드\))/g, '');
+    const label = s.source === 'sqlite' ? ' · 데이터원본 SQLite' : (s.source === 'browser-fallback' ? ' · 데이터원본 Browser(복구모드)' : ' · 데이터원본 Browser');
     const badge = document.getElementById('hdr-sub');
     if (badge) badge.textContent = cleaned + label;
   });
