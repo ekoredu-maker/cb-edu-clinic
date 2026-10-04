@@ -48,7 +48,18 @@ def _cell(text: Any, row: int, col: int, width: int, height: int, pid: int, *, h
     )
 
 
-def _table(columns: list[Any], rows: list[list[Any]], widths: list[int | float], table_id: int, pid_start: int, page_width: int) -> tuple[str, int]:
+def _table(
+    columns: list[Any],
+    rows: list[list[Any]],
+    widths: list[int | float],
+    table_id: int,
+    pid_start: int,
+    page_width: int,
+    *,
+    show_header: bool = True,
+    label_cols: set[int] | None = None,
+    row_heights: list[int] | None = None,
+) -> tuple[str, int]:
     col_count = max(1, len(columns))
     if len(widths) != col_count:
         widths = [1] * col_count
@@ -56,23 +67,36 @@ def _table(columns: list[Any], rows: list[list[Any]], widths: list[int | float],
     cell_widths = [max(900, int(page_width * float(w or 0) / total_weight)) for w in widths]
     delta = page_width - sum(cell_widths)
     cell_widths[-1] += delta
-    row_height = 2200
-    all_rows = [list(columns)] + [list(r) for r in rows]
+
+    label_cols = label_cols or set()
+    default_height = 2200
+    all_rows = ([list(columns)] if show_header else []) + [list(r) for r in rows]
     pid = pid_start
     row_xml: list[str] = []
+    total_height = 0
     for r_idx, row in enumerate(all_rows):
+        data_idx = r_idx - 1 if show_header else r_idx
+        if show_header and r_idx == 0:
+            height = default_height
+        elif row_heights and 0 <= data_idx < len(row_heights):
+            height = max(1200, int(row_heights[data_idx] or default_height))
+        else:
+            height = default_height
+        total_height += height
+
         cells: list[str] = []
         padded = row[:col_count] + [""] * max(0, col_count - len(row))
         for c_idx, value in enumerate(padded):
-            cells.append(_cell(value, r_idx, c_idx, cell_widths[c_idx], row_height, pid, header=(r_idx == 0)))
+            is_header = (show_header and r_idx == 0) or (not (show_header and r_idx == 0) and c_idx in label_cols and bool(value))
+            cells.append(_cell(value, r_idx, c_idx, cell_widths[c_idx], height, pid, header=is_header))
             pid += 1
         row_xml.append('<hp:tr>' + ''.join(cells) + '</hp:tr>')
-    table_height = row_height * len(all_rows)
+
     xml = (
         f'<hp:tbl id="{table_id}" zOrder="0" numberingType="TABLE" textWrap="TOP_AND_BOTTOM" '
-        f'textFlow="BOTH_SIDES" lock="0" dropcapstyle="None" pageBreak="CELL" repeatHeader="1" '
+        f'textFlow="BOTH_SIDES" lock="0" dropcapstyle="None" pageBreak="CELL" repeatHeader="{1 if show_header else 0}" '
         f'rowCnt="{len(all_rows)}" colCnt="{col_count}" cellSpacing="0" borderFillIDRef="2" noAdjust="0">'
-        f'<hp:sz width="{page_width}" widthRelTo="ABSOLUTE" height="{table_height}" heightRelTo="ABSOLUTE" protect="0"/>'
+        f'<hp:sz width="{page_width}" widthRelTo="ABSOLUTE" height="{total_height}" heightRelTo="ABSOLUTE" protect="0"/>'
         '<hp:pos treatAsChar="1" affectLSpacing="0" flowWithText="1" allowOverlap="0" holdAnchorAndSO="0" '
         'vertRelTo="PARA" horzRelTo="COLUMN" vertAlign="TOP" horzAlign="LEFT" vertOffset="0" horzOffset="0"/>'
         '<hp:outMargin left="0" right="0" top="0" bottom="0"/>'
@@ -97,7 +121,7 @@ def _secpr(*, landscape: bool) -> str:
         '<hp:visibility hideFirstHeader="0" hideFirstFooter="0" hideFirstMasterPage="0" border="SHOW_ALL" fill="SHOW_ALL" '
         'hideFirstPageNum="0" hideFirstEmptyLine="0" showLineNumber="0"/>'
         '<hp:lineNumberShape restartType="0" countBy="0" distance="0" startNumber="0"/>'
-        f'<hp:pagePr landscape="{ "WIDELY" if landscape else "NARROWLY" }" width="{width}" height="{height}" gutterType="LEFT_ONLY">'
+        f'<hp:pagePr landscape="{"WIDELY" if landscape else "NARROWLY"}" width="{width}" height="{height}" gutterType="LEFT_ONLY">'
         f'<hp:margin header="2835" footer="2835" gutter="0" left="{margin_lr}" right="{margin_lr}" top="{margin_tb}" bottom="{margin_tb}"/>'
         '</hp:pagePr>'
         '</hp:secPr>'
@@ -171,27 +195,60 @@ def _header_xml() -> str:
 
 
 def _section_xml(model: dict[str, Any]) -> str:
-    key = str(model.get("key") or "")
-    landscape = key in {"execution_report", "manager_book"}
+    contract = model.get("contract") or {}
+    landscape = bool(model.get("landscape", contract.get("landscape", False)))
     page_width = 75684 if landscape else 48190
     pid = 1000000010
     body: list[str] = [_secpr(landscape=landscape)]
     body.append(_paragraph(model.get("title") or "", pid, char_pr=1, para_pr=1)); pid += 1
+
     for pair in model.get("meta") or []:
         if isinstance(pair, (list, tuple)) and len(pair) >= 2:
             body.append(_paragraph(f"{pair[0]}: {pair[1]}", pid)); pid += 1
+    for text in model.get("paragraphsBefore") or []:
+        body.append(_paragraph(text, pid)); pid += 1
     body.append(_paragraph("", pid)); pid += 1
 
-    columns = list(model.get("columns") or [])
-    rows = [list(x) for x in (model.get("rows") or [])]
-    if model.get("summaryRow") is not None:
-        rows.append(list(model.get("summaryRow") or []))
-    widths = list((model.get("contract") or {}).get("columnWidths") or [1] * max(1, len(columns)))
-    table_xml, pid = _table(columns, rows, widths, 1000001000, pid, page_width)
-    body.append(
-        f'<hp:p id="{pid}" paraPrIDRef="0" styleIDRef="0" pageBreak="0" columnBreak="0" merged="0">'
-        f'<hp:run charPrIDRef="0">{table_xml}</hp:run></hp:p>'
-    ); pid += 1
+    tables = model.get("tables")
+    if not isinstance(tables, list) or not tables:
+        tables = [{
+            "columns": model.get("columns") or [],
+            "rows": model.get("rows") or [],
+            "widths": contract.get("columnWidths") or [],
+            "showHeader": model.get("showHeader", contract.get("showHeader", True)),
+            "labelColumns": model.get("labelColumns", contract.get("labelColumns", [])),
+            "rowHeights": model.get("rowHeights") or [],
+        }]
+
+    for index, table in enumerate(tables):
+        if table.get("title"):
+            body.append(_paragraph(table.get("title"), pid, char_pr=2)); pid += 1
+        columns = list(table.get("columns") or [])
+        rows = [list(x) for x in (table.get("rows") or [])]
+        if index == 0 and model.get("summaryRow") is not None and len(tables) == 1:
+            rows.append(list(model.get("summaryRow") or []))
+        if not columns:
+            continue
+        widths = list(table.get("widths") or contract.get("columnWidths") or [1] * len(columns))
+        show_header = bool(table.get("showHeader", True))
+        label_cols = {int(x) for x in (table.get("labelColumns") or [])}
+        row_heights = [int(x) for x in (table.get("rowHeights") or [])]
+        table_xml, pid = _table(
+            columns,
+            rows,
+            widths,
+            1000001000 + index,
+            pid,
+            page_width,
+            show_header=show_header,
+            label_cols=label_cols,
+            row_heights=row_heights,
+        )
+        body.append(
+            f'<hp:p id="{pid}" paraPrIDRef="0" styleIDRef="0" pageBreak="0" columnBreak="0" merged="0">'
+            f'<hp:run charPrIDRef="0">{table_xml}</hp:run></hp:p>'
+        ); pid += 1
+        body.append(_paragraph("", pid)); pid += 1
 
     summary = model.get("summary") or []
     if summary:
@@ -202,6 +259,10 @@ def _section_xml(model: dict[str, Any]) -> str:
             f'<hp:p id="{pid}" paraPrIDRef="0" styleIDRef="0" pageBreak="0" columnBreak="0" merged="0">'
             f'<hp:run charPrIDRef="0">{sum_xml}</hp:run></hp:p>'
         ); pid += 1
+
+    for text in model.get("paragraphsAfter") or []:
+        center = text in {"[직인]"} or str(text).endswith("교육지원청교육장") or re_issuer_like(text)
+        body.append(_paragraph(text, pid, char_pr=2 if center else 0, para_pr=1 if center else 0)); pid += 1
 
     if model.get("footer"):
         body.append(_paragraph(model["footer"], pid)); pid += 1
@@ -214,6 +275,11 @@ def _section_xml(model: dict[str, Any]) -> str:
         + ''.join(body) +
         '</hs:sec>'
     )
+
+
+def re_issuer_like(value: Any) -> bool:
+    text = str(value or "")
+    return text.endswith("교육지원청교육장") or text.endswith("교육장")
 
 
 def _content_hpf(title: str) -> str:
@@ -234,11 +300,13 @@ def _content_hpf(title: str) -> str:
 
 
 def create_native_hwpx(output_path: str | Path, model: dict[str, Any]) -> Path:
+    tables = model.get("tables")
     columns = model.get("columns")
-    if not isinstance(columns, list) or not columns:
-        raise NativeHwpxError("문서모델에 columns가 없습니다.")
+    has_table = isinstance(tables, list) and bool(tables)
+    if not has_table and (not isinstance(columns, list) or not columns):
+        raise NativeHwpxError("문서모델에 columns/tables가 없습니다.")
     rows = model.get("rows")
-    if not isinstance(rows, list):
+    if not has_table and not isinstance(rows, list):
         raise NativeHwpxError("문서모델의 rows가 배열이 아닙니다.")
 
     dst = Path(output_path)
