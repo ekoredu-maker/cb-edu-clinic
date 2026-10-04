@@ -2,8 +2,7 @@
 from pathlib import Path
 from PyInstaller.utils.hooks import collect_all, collect_submodules
 
-ROOT = Path(SPECPATH).resolve().parents[0]
-REPO = ROOT.parent
+REPO = Path(SPECPATH).resolve()
 BACKEND = REPO / "backend"
 
 datas = [
