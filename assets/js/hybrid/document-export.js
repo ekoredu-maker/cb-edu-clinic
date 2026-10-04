@@ -106,4 +106,18 @@ export function installDocumentExports() {
       return oldExecXlsx?.();
     }
   };
+
+  const oldMgrXlsx = window.exportMgrBookXlsx;
+  window.exportMgrBookXlsx = async function() {
+    const staffId = document.getElementById('mgr-stf-sel')?.value || '';
+    const ym = document.getElementById('mgr-ym')?.value || '';
+    if (!staffId || !ym) return oldMgrXlsx?.();
+    try {
+      const filename = await download('/api/export/manager-book.xlsx', { state: getState(), staffId, ym });
+      notify(`Python 관리부 Excel 생성 완료: ${filename}`, 'success');
+    } catch (e) {
+      console.warn('[V13] Python manager-book Excel fallback:', e);
+      return oldMgrXlsx?.();
+    }
+  };
 }
