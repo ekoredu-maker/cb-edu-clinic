@@ -32,3 +32,16 @@ jobs:
       - name: Run regression suite
         shell: pwsh
         run: python -m pytest -q
+
+      - name: Check hybrid JavaScript syntax
+        shell: pwsh
+        working-directory: .
+        run: |
+          node --check assets/js/bootstrap.js
+          node --check assets/js/hybrid/python-bridge.js
+          node --check assets/js/hybrid/regression.js
+          node --check assets/js/hybrid/engine-source.js
+          node --check assets/js/hybrid/authoritative-engine.js
+          node --check assets/js/hybrid/dual-write.js
+          node --check assets/js/hybrid/storage-migration.js
+          node --check assets/js/hybrid/document-export.js
