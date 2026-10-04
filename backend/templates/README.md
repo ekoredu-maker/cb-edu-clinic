@@ -11,19 +11,46 @@ Python 엔진의 `services/format_contract.py`가 HTML 서식의 제목, 메타�
 
 즉 HTML과 다른 새 서식을 Python에서 임의로 만들지 않습니다.
 
-## HWPX 템플릿
+## 출력 우선순위
 
-실제 HWPX 원본을 확보한 경우에는 아래 파일명을 권장합니다.
+1. 실제 HWPX 원본 템플릿이 존재하면 원본 서식을 보존하는 템플릿 매퍼 사용
+2. 원본 템플릿이 없고 HTML 서식계약이 확정된 경우 `document_model.py` → `hwpx_native_service.py` 네이티브 HWPX 생성
+3. 아직 HTML 서식계약도 확정되지 않은 서식은 임의 생성하지 않고 원본 서식을 요구
+
+현재 네이티브 HWPX 대상:
+- 지급명세서
+- 월별 집행내역서
+- 학습지원단 관리부
+
+## HWPX 네이티브 구조검사
+
+자동시험에서는 다음을 검증합니다.
+- `mimetype`가 ZIP 첫 엔트리이며 무압축인지
+- mimetype 값이 `application/hwp+zip`인지
+- `META-INF/container.xml`
+- `Contents/content.hpf`
+- `Contents/header.xml`
+- `Contents/section0.xml`
+- `Contents/settings.xml`
+- `version.xml`
+- section에 구역설정(`secPr`)과 표가 존재하는지
+- 서식계약과 표 열 수/행 수가 일치하는지
+
+이 구조검사는 통과했지만, **실제 한컴오피스에서 열림·인쇄까지 검증한 것은 아닙니다.** 한컴 렌더러 호환성은 Windows 로컬 UAT로 최종 확인합니다.
+
+## 실제 HWPX 템플릿을 추가할 경우
+
+권장 파일명:
 - `pay_slip.hwpx`
 - `execution_report.hwpx`
 - `manager_book.hwpx`
 - `operation_report.hwpx`
 
-HWPX 원본이 연결되면 `format_contract.py`의 구조와 Python 계산결과를 기준으로 값을 주입하고, 상세내역 표는 서식별 table mapper가 행을 반복합니다.
+템플릿이 존재하면 네이티브 생성보다 자동으로 우선합니다.
 
-## 자리표시자
+## 자리표시자 방식
 
-HWPX 원본 문서의 텍스트 위치에 `{{KEY}}` 형식으로 입력하면 공통 엔진이 값을 치환합니다.
+기존 템플릿을 사용하는 경우 `{{KEY}}` 형식으로 고정 셀 값을 치환할 수 있습니다.
 
 공통 예시:
 - `{{YM}}`
@@ -40,4 +67,4 @@ HWPX 원본 문서의 텍스트 위치에 `{{KEY}}` 형식으로 입력하면 �
 - `{{TAX}}`
 - `{{NET}}`
 
-현재 공통 HWPX 엔진은 고정 셀 치환을 지원합니다. 다음 단계에서는 HTML 서식계약을 이용해 HWPX 표 행 반복 매퍼를 구현합니다.
+문서렌더러는 업무금액을 다시 계산하지 않습니다. 통계·검증·정산 Python 도메인 엔진의 계산결과를 정규화 문서모델에 넣어 Excel과 HWPX가 같은 값을 사용합니다.
