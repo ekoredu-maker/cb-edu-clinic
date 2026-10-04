@@ -112,6 +112,7 @@
 - 회귀시험에 행정서식 데이터, 경력집계, 마스킹, 시간표 8열·28행, HWPX 표 구조 검증 추가
 - 개인정보 없는 합성데이터로 9종 HWPX 한컴 UAT 샘플 세트를 자동 생성
 - CI 아티팩트 `V13_HWPX_Hancom_UAT_Samples` 업로드
+- 15단계 코드에서 Python 회귀시험, Operational UAT, HWPX 샘플 9종 생성, Hybrid JS syntax 검사 PASS
 
 ## 문서출력 아키텍처
 
