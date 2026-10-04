@@ -16,7 +16,7 @@ from services.document_model import (
     staff_appointment_model,
     timetable_model,
 )
-from services.hwpx_native_service import create_native_hwpx, validate_native_hwpx
+from services.hwpx_native_service import create_native_hwpx, render_diagnostics, validate_native_hwpx
 from tests.load_fixture import build_large_state
 
 
@@ -89,8 +89,10 @@ def generate_pack(output_dir: Path) -> dict:
             "한컴오피스에서 경고 없이 열리는지",
             "제목/본문/표의 한글이 깨지지 않는지",
             "셀 너비와 줄바꿈이 읽기 좋은지",
-            "세로/가로 방향이 적절한지",
-            "쪽 나눔과 인쇄 미리보기가 자연스러운지",
+            "페이지 방향(세로/가로)이 manifest 예상값과 일치하는지",
+            "singlePageTarget 문서가 한 쪽에 자연스럽게 들어가는지",
+            "교육장 명의·직인 표기와 신청인/담당자 정렬이 자연스러운지",
+            "쪽 나눔과 인쇄 미리보기가 업무서식으로 자연스러운지",
             "저장 후 다시 열어도 문서가 유지되는지",
         ],
     }
@@ -98,11 +100,13 @@ def generate_pack(output_dir: Path) -> dict:
     for filename, model in models:
         path = create_native_hwpx(output_dir / filename, model)
         validation = validate_native_hwpx(path)
+        diagnostics = render_diagnostics(model)
         manifest["documents"].append({
             "file": filename,
             "key": model.get("key"),
             "title": model.get("title"),
             "structuralValidation": validation,
+            "printDiagnostics": diagnostics,
         })
 
     (output_dir / "UAT_MANIFEST.json").write_text(
@@ -117,7 +121,16 @@ def generate_pack(output_dir: Path) -> dict:
     ]
     lines.extend(f"- {item}" for item in manifest["manualChecks"])
     lines.extend(["", "## 문서 목록"])
-    lines.extend(f"- {doc['file']} — {doc['title']}" for doc in manifest["documents"])
+    for doc in manifest["documents"]:
+        diag = doc["printDiagnostics"]
+        target = " · 한 쪽 목표" if diag.get("singlePageTarget") else ""
+        lines.append(f"- {doc['file']} — {doc['title']} · {diag['orientation']}{target}")
+    lines.extend([
+        "",
+        "## 자동 진단 주의",
+        "- `fitSinglePage`는 HWPX 내부 치수 기반 사전 추정치이며 실제 한컴오피스 페이지 렌더링을 대체하지 않습니다.",
+        "- 최종 판정은 한컴오피스의 인쇄 미리보기와 저장 후 재열기로 확인합니다.",
+    ])
     (output_dir / "README.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
     return manifest
 
