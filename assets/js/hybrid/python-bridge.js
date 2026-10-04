@@ -21,24 +21,22 @@ const PythonBridge = (() => {
   }
 
   async function statistics(payload) {
-    return request('/api/statistics', {
-      method: 'POST',
-      body: JSON.stringify(payload),
-    });
+    return request('/api/statistics', { method: 'POST', body: JSON.stringify(payload) });
   }
 
   async function verification(payload) {
-    return request('/api/verification', {
-      method: 'POST',
-      body: JSON.stringify(payload),
-    });
+    return request('/api/verification', { method: 'POST', body: JSON.stringify(payload) });
+  }
+
+  async function settlement(payload) {
+    return request('/api/settlement', { method: 'POST', body: JSON.stringify(payload) });
   }
 
   function setBaseUrl(url) {
     baseUrl = String(url || '').replace(/\/$/, '');
   }
 
-  return { isAvailable, health, statistics, verification, setBaseUrl };
+  return { isAvailable, health, statistics, verification, settlement, setBaseUrl };
 })();
 
 window.PythonBridge = PythonBridge;
