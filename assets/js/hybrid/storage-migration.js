@@ -30,8 +30,23 @@ export async function migrateCurrentStateToSqlite(){
   const ok = window.confirm(`현재 브라우저 데이터를 SQLite로 안전 이관합니다.\n\n지원단 ${counts.stf}명\n학생 ${counts.stu}명\n매칭 ${counts.mat}건\n연수 ${counts.trn}건\n총 ${total}건\n\n기존 SQLite 데이터는 교체됩니다. 계속하시겠습니까?`);
   if (!ok) return null;
   const result = await PythonBridge.storageImport(state, { source:'v12-browser', replace:true });
-  toastSafe(`SQLite 이관 완료 · ${result.recordCount}건`, 'success');
   window.__V13_STORAGE_STATUS__ = result.storage;
+  if (window.ClinicDualWrite?.install) window.ClinicDualWrite.install();
+  const parity = window.ClinicDualWrite?.compare ? await window.ClinicDualWrite.compare() : await PythonBridge.storageCompare(state);
+  toastSafe(parity?.ok ? `SQLite 이관 완료 · ${result.recordCount}건 · 동기화 PASS` : `SQLite 이관 완료 · ${result.recordCount}건 · 동기화 확인 필요`, parity?.ok ? 'success' : 'warning');
+  return { ...result, parity };
+}
+
+export async function compareSqliteState(){
+  if (!PythonBridge.isAvailable()) throw new Error('Python 엔진이 연결되지 않았습니다.');
+  const result = window.ClinicDualWrite?.compare ? await window.ClinicDualWrite.compare() : await PythonBridge.storageCompare(getState());
+  if (result.ok) {
+    toastSafe('브라우저 데이터와 SQLite가 일치합니다.', 'success');
+  } else {
+    const diffs = (result.checks || []).filter(x=>!x.ok).map(x=>x.key).join(', ');
+    toastSafe(`SQLite 동기화 차이 발견: ${diffs || '상세 확인 필요'}`, 'warning');
+    console.warn('[V13 Storage Compare]', result);
+  }
   return result;
 }
 
@@ -72,6 +87,7 @@ function addButton(host, label, handler, className='btn btn-outline btn-sm'){
 export function installStorageMigrationControls(){
   window.ClinicStorage = {
     migrate: migrateCurrentStateToSqlite,
+    compare: compareSqliteState,
     status: showSqliteStatus,
     backup: downloadSqliteBackup,
     read: readSqliteState,
@@ -86,12 +102,13 @@ export function installStorageMigrationControls(){
   panel.innerHTML = `
     <div class="panel-title">🗄️ V13 로컬 데이터베이스 <span class="badge" style="background:#0f766e;color:#fff">Hybrid</span></div>
     <p style="color:var(--muted);font-size:12px;margin:8px 0 12px">
-      현재 브라우저 데이터를 로컬 SQLite로 이관합니다. V12/PWA 데이터는 그대로 유지되며, 이 단계에서는 SQLite를 병행 저장소로 사용합니다.
+      최초 이관 후에는 저장·삭제가 브라우저 저장소와 SQLite에 함께 반영됩니다. 브라우저 데이터는 계속 유지되며 SQLite 불일치가 생기면 헤더에 경고가 표시됩니다.
     </p>
     <div id="v13-sqlite-actions" style="display:flex;gap:8px;flex-wrap:wrap"></div>`;
   settings.appendChild(panel);
   const host = panel.querySelector('#v13-sqlite-actions');
   addButton(host, '💾 현재 데이터 → SQLite 이관', migrateCurrentStateToSqlite, 'btn btn-primary btn-sm');
+  addButton(host, '✅ 동기화 비교', compareSqliteState);
   addButton(host, '🔎 SQLite 상태 확인', showSqliteStatus);
   addButton(host, '📦 SQLite 백업 JSON', downloadSqliteBackup);
 }
