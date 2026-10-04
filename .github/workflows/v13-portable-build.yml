@@ -74,6 +74,13 @@ jobs:
           if (!(Test-Path 'dist/학습클리닉_V13/_internal/assets/js/bootstrap.js')) { throw 'frontend assets missing' }
           if (!(Test-Path 'dist/학습클리닉_V13/portable.flag')) { throw 'portable.flag missing' }
 
+      - name: Smoke-test packaged EXE
+        shell: pwsh
+        run: |
+          $p = Start-Process -FilePath 'dist/학습클리닉_V13/학습클리닉_V13.exe' -ArgumentList '--self-test' -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "Packaged EXE self-test failed: exit $($p.ExitCode)" }
+          if (!(Test-Path 'dist/학습클리닉_V13/data/clinic_v13.db')) { throw 'portable SQLite database was not created' }
+
       - name: Upload portable package
         uses: actions/upload-artifact@v4
         with:
