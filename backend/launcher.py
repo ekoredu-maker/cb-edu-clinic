@@ -51,10 +51,28 @@ def self_test() -> int:
         health = json.loads(response.read().decode("utf-8"))
         if response.status != 200 or not health.get("ok"):
             raise RuntimeError("health check failed")
+
     with urlopen(f"{base_url}/", timeout=3.0) as response:
-        html = response.read(4096).decode("utf-8", errors="ignore")
+        html = response.read(8192).decode("utf-8", errors="ignore")
         if response.status != 200 or "학습클리닉" not in html:
             raise RuntimeError("packaged frontend check failed")
+
+    if getattr(sys, "frozen", False):
+        offline = health.get("offline") or {}
+        if not offline.get("ready"):
+            raise RuntimeError(f"offline bundle check failed: {offline}")
+        for asset in (
+            "/assets/vendor/chart.umd.js",
+            "/assets/vendor/xlsx.full.min.js",
+            "/assets/vendor/versions.json",
+        ):
+            with urlopen(f"{base_url}{asset}", timeout=3.0) as response:
+                body = response.read()
+                if response.status != 200 or len(body) < 10:
+                    raise RuntimeError(f"offline asset serving failed: {asset}")
+        if "assets/vendor/chart.umd.js" not in html or "assets/vendor/xlsx.full.min.js" not in html:
+            raise RuntimeError("packaged index is not using local vendor assets")
+
     return 0
 
 
