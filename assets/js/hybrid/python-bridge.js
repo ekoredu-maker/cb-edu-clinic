@@ -1,6 +1,10 @@
 const PythonBridge = (() => {
   const params = new URLSearchParams(window.location.search);
-  let baseUrl = params.get('api') || window.__PYTHON_API_BASE__ || '';
+  const sameOriginDesktop = (
+    ['127.0.0.1', 'localhost'].includes(window.location.hostname)
+    && ['http:', 'https:'].includes(window.location.protocol)
+  ) ? window.location.origin : '';
+  let baseUrl = params.get('api') || window.__PYTHON_API_BASE__ || sameOriginDesktop || '';
 
   function isAvailable() {
     return Boolean(baseUrl);
