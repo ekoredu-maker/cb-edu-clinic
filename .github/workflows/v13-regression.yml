@@ -33,6 +33,10 @@ jobs:
         shell: pwsh
         run: python -m pytest -q
 
+      - name: Run operational UAT
+        shell: pwsh
+        run: python uat_runner.py --output-dir ../.build/uat
+
       - name: Check hybrid JavaScript syntax
         shell: pwsh
         working-directory: .
@@ -46,3 +50,14 @@ jobs:
           node --check assets/js/hybrid/storage-migration.js
           node --check assets/js/hybrid/read-source.js
           node --check assets/js/hybrid/document-export.js
+
+      - name: Upload UAT report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: V13_Operational_UAT_Report
+          path: |
+            .build/uat/uat_report.json
+            .build/uat/uat_report.md
+          if-no-files-found: warn
+          retention-days: 14
