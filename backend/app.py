@@ -24,10 +24,11 @@ from domain.verification import verify_records
 from domain.settlement import build_settlement
 from runtime_paths import frontend_root, generated_dir, template_dir
 from services.document_context import execution_context, settlement_context
-from services.excel_service import create_execution_xlsx, create_pay_slip_xlsx
+from services.excel_service import create_execution_xlsx, create_manager_book_xlsx, create_pay_slip_xlsx
+from services.format_contract import list_format_contracts
 from services.hwpx_service import HwpxTemplateError, create_from_template
 
-app = FastAPI(title="CB Edu Clinic V13 Hybrid Engine", version="13.0.0-alpha11")
+app = FastAPI(title="CB Edu Clinic V13 Hybrid Engine", version="13.0.0-alpha13")
 
 app.add_middleware(
     CORSMiddleware,
@@ -83,17 +84,24 @@ def health() -> dict:
         for key, filename in HWPX_TEMPLATES.items()
     }
     offline_status = {key: path.exists() for key, path in OFFLINE_ASSETS.items()}
+    format_contracts = list_format_contracts()
     return {
         "ok": True,
         "engine": "python",
-        "version": "13.0.0-alpha11",
+        "version": "13.0.0-alpha13",
         "templates": template_status,
+        "formatContracts": {key: True for key in format_contracts},
         "offline": {
             "ready": all(offline_status.values()),
             "assets": offline_status,
         },
         "storage": storage_status(),
     }
+
+
+@app.get("/api/formats")
+def formats() -> dict:
+    return {"ok": True, "contracts": list_format_contracts()}
 
 
 @app.get("/api/storage/status")
@@ -218,9 +226,28 @@ def export_execution_xlsx(payload: dict):
     if not ym:
         raise HTTPException(status_code=400, detail="ym이 필요합니다.")
     result = build_settlement({"state": state, "ym": ym})
-    filename = f"월별집행내역_{ym}.xlsx"
+    filename = f"집행내역서_{ym}.xlsx"
     out = GENERATED_DIR / filename
     create_execution_xlsx(out, result, _staff_by_id(state), ym, (state.get("cfg") or {}).get("org") or "")
+    return FileResponse(out, filename=filename, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+
+@app.post("/api/export/manager-book.xlsx")
+def export_manager_book_xlsx(payload: dict):
+    state = _state(payload)
+    ym = str(payload.get("ym") or "")
+    staff_id = str(payload.get("staffId") or "")
+    if not ym or not staff_id:
+        raise HTTPException(status_code=400, detail="ym과 staffId가 필요합니다.")
+    staff = _staff_by_id(state).get(staff_id)
+    if not staff:
+        raise HTTPException(status_code=404, detail="지원단 정보를 찾을 수 없습니다.")
+    filename = f"관리부_{_safe_name(staff.get('nm',''))}_{ym}.xlsx"
+    out = GENERATED_DIR / filename
+    try:
+        create_manager_book_xlsx(out, state, staff_id, ym)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     return FileResponse(out, filename=filename, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
 
