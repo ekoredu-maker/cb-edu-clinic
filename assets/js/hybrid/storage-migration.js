@@ -33,6 +33,7 @@ export async function migrateCurrentStateToSqlite(){
   window.__V13_STORAGE_STATUS__ = result.storage;
   if (window.ClinicDualWrite?.install) window.ClinicDualWrite.install();
   const parity = window.ClinicDualWrite?.compare ? await window.ClinicDualWrite.compare() : await PythonBridge.storageCompare(state);
+  if (parity?.ok && window.ClinicReadSource?.select) await window.ClinicReadSource.select();
   toastSafe(parity?.ok ? `SQLite 이관 완료 · ${result.recordCount}건 · 동기화 PASS` : `SQLite 이관 완료 · ${result.recordCount}건 · 동기화 확인 필요`, parity?.ok ? 'success' : 'warning');
   return { ...result, parity };
 }
@@ -50,11 +51,24 @@ export async function compareSqliteState(){
   return result;
 }
 
+export async function restoreSqliteFromBrowser(){
+  if (!PythonBridge.isAvailable()) throw new Error('Python 엔진이 연결되지 않았습니다.');
+  const ok = window.confirm('현재 브라우저 데이터를 기준으로 SQLite를 복구합니다.\n\nSQLite의 기존 내용은 교체되며, 브라우저 데이터는 변경하지 않습니다. 계속하시겠습니까?');
+  if (!ok) return null;
+  const result = window.ClinicReadSource?.restoreSqliteFromBrowser
+    ? await window.ClinicReadSource.restoreSqliteFromBrowser()
+    : { result: await PythonBridge.storageImport(getState(), { source:'manual-recovery', replace:true }) };
+  const parity = result.parity || await PythonBridge.storageCompare(getState());
+  toastSafe(parity.ok ? 'SQLite 복구 완료 · 동기화 PASS' : 'SQLite 복구 후에도 차이가 있습니다.', parity.ok ? 'success' : 'warning');
+  return { ...result, parity };
+}
+
 export async function showSqliteStatus(){
   if (!PythonBridge.isAvailable()) throw new Error('Python 엔진이 연결되지 않았습니다.');
   const s = await PythonBridge.storageStatus();
   const c = s.counts || {};
-  alert(`V13 SQLite 저장 상태\n\n지원단 ${c.stf||0}\n학생 ${c.stu||0}\n매칭 ${c.mat||0}\n연수 ${c.trn||0}\n총 ${s.totalRecords||0}건\n\n최근 이관: ${s.lastMigration?.created_at || '없음'}`);
+  const readSource = window.ClinicReadSource?.status?.();
+  alert(`V13 SQLite 저장 상태\n\n지원단 ${c.stf||0}\n학생 ${c.stu||0}\n매칭 ${c.mat||0}\n연수 ${c.trn||0}\n총 ${s.totalRecords||0}건\n\n최근 이관: ${s.lastMigration?.created_at || '없음'}\n데이터 원본: ${readSource?.source || 'browser'}`);
   return s;
 }
 
@@ -88,6 +102,7 @@ export function installStorageMigrationControls(){
   window.ClinicStorage = {
     migrate: migrateCurrentStateToSqlite,
     compare: compareSqliteState,
+    recover: restoreSqliteFromBrowser,
     status: showSqliteStatus,
     backup: downloadSqliteBackup,
     read: readSqliteState,
@@ -102,13 +117,14 @@ export function installStorageMigrationControls(){
   panel.innerHTML = `
     <div class="panel-title">🗄️ V13 로컬 데이터베이스 <span class="badge" style="background:#0f766e;color:#fff">Hybrid</span></div>
     <p style="color:var(--muted);font-size:12px;margin:8px 0 12px">
-      최초 이관 후에는 저장·삭제가 브라우저 저장소와 SQLite에 함께 반영됩니다. 브라우저 데이터는 계속 유지되며 SQLite 불일치가 생기면 헤더에 경고가 표시됩니다.
+      동기화가 정상일 때 Windows 버전은 SQLite를 읽기 원본으로 사용합니다. 불일치나 오류가 있으면 브라우저 저장소로 자동 전환되며, 아래 복구 버튼으로 현재 브라우저 데이터를 SQLite에 다시 반영할 수 있습니다.
     </p>
     <div id="v13-sqlite-actions" style="display:flex;gap:8px;flex-wrap:wrap"></div>`;
   settings.appendChild(panel);
   const host = panel.querySelector('#v13-sqlite-actions');
   addButton(host, '💾 현재 데이터 → SQLite 이관', migrateCurrentStateToSqlite, 'btn btn-primary btn-sm');
   addButton(host, '✅ 동기화 비교', compareSqliteState);
+  addButton(host, '🛠 Browser 기준 SQLite 복구', restoreSqliteFromBrowser);
   addButton(host, '🔎 SQLite 상태 확인', showSqliteStatus);
   addButton(host, '📦 SQLite 백업 JSON', downloadSqliteBackup);
 }
