@@ -9,8 +9,6 @@ Python 엔진의 `services/format_contract.py`가 HTML 서식의 제목, 메타�
 - `execution_report` : 월별 활동비 집행내역서 (`legacy-js/10-ext-v99.js`)
 - `manager_book` : 학습지원단 관리부 (`legacy-js/08-forms.js`)
 
-즉 HTML과 다른 새 서식을 Python에서 임의로 만들지 않습니다.
-
 ## 출력 우선순위
 1. 실제 HWPX 원본 템플릿이 존재하면 원본 서식을 보존하는 템플릿 매퍼 사용
 2. 원본 템플릿이 없고 HTML 서식계약이 확정된 경우 `document_model.py` → `hwpx_native_service.py` 네이티브 HWPX 생성
