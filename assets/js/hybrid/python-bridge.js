@@ -1,8 +1,15 @@
 const PythonBridge = (() => {
-  const DEFAULT_BASE = 'http://127.0.0.1:8765';
-  let baseUrl = DEFAULT_BASE;
+  const params = new URLSearchParams(window.location.search);
+  let baseUrl = params.get('api') || window.__PYTHON_API_BASE__ || '';
+
+  function isAvailable() {
+    return Boolean(baseUrl);
+  }
 
   async function request(path, options = {}) {
+    if (!baseUrl) {
+      throw new Error('Python engine is not connected.');
+    }
     const response = await fetch(`${baseUrl}${path}`, {
       headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
       ...options,
@@ -32,10 +39,10 @@ const PythonBridge = (() => {
   }
 
   function setBaseUrl(url) {
-    baseUrl = String(url || DEFAULT_BASE).replace(/\/$/, '');
+    baseUrl = String(url || '').replace(/\/$/, '');
   }
 
-  return { health, statistics, verification, setBaseUrl };
+  return { isAvailable, health, statistics, verification, setBaseUrl };
 })();
 
 window.PythonBridge = PythonBridge;
