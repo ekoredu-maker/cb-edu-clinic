@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from copy import deepcopy
 from datetime import datetime, timezone
@@ -17,7 +18,11 @@ class StateMigrationError(RuntimeError):
 
 
 def _json(value: Any) -> str:
-    return json.dumps(value, ensure_ascii=False, separators=(",", ":"), default=str)
+    return json.dumps(value, ensure_ascii=False, separators=(",", ":"), sort_keys=True, default=str)
+
+
+def _hash(value: Any) -> str:
+    return hashlib.sha256(_json(value).encode("utf-8")).hexdigest()
 
 
 def _record_id(entity_type: str, row: dict[str, Any], index: int) -> str:
@@ -118,6 +123,69 @@ def import_state(state: dict[str, Any], *, source: str = "v12-json", replace: bo
     return {"ok": True, "recordCount": record_count, "mode": "replace" if replace else "merge"}
 
 
+def upsert_record(entity_type: str, record: dict[str, Any], *, source: str = "dual-write") -> dict[str, Any]:
+    if entity_type not in COLLECTION_KEYS:
+        raise StateMigrationError(f"지원하지 않는 레코드 유형입니다: {entity_type}")
+    if not isinstance(record, dict):
+        raise StateMigrationError("record는 객체여야 합니다.")
+    rid = _record_id(entity_type, record, 0)
+    now = datetime.now(timezone.utc).isoformat()
+    payload = _json(record)
+    with connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO records(entity_type, entity_id, payload_json, updated_at)
+            VALUES(?,?,?,?)
+            ON CONFLICT(entity_type, entity_id) DO UPDATE SET
+              payload_json=excluded.payload_json,
+              updated_at=excluded.updated_at
+            """,
+            (entity_type, rid, payload, now),
+        )
+        conn.execute(
+            "INSERT INTO audit_log(action, entity_type, entity_id, detail) VALUES(?,?,?,?)",
+            ("dual_upsert", entity_type, rid, _json({"source": source, "hash": _hash(record)})),
+        )
+    return {"ok": True, "entityType": entity_type, "id": rid, "hash": _hash(record)}
+
+
+def delete_record(entity_type: str, entity_id: str, *, source: str = "dual-write") -> dict[str, Any]:
+    if entity_type not in COLLECTION_KEYS:
+        raise StateMigrationError(f"지원하지 않는 레코드 유형입니다: {entity_type}")
+    rid = str(entity_id or "")
+    if not rid:
+        raise StateMigrationError("삭제할 id가 필요합니다.")
+    with connect() as conn:
+        cur = conn.execute("DELETE FROM records WHERE entity_type=? AND entity_id=?", (entity_type, rid))
+        conn.execute(
+            "INSERT INTO audit_log(action, entity_type, entity_id, detail) VALUES(?,?,?,?)",
+            ("dual_delete", entity_type, rid, _json({"source": source, "deleted": cur.rowcount})),
+        )
+    return {"ok": True, "entityType": entity_type, "id": rid, "deleted": int(cur.rowcount)}
+
+
+def save_singleton(key: str, value: Any, *, source: str = "dual-write") -> dict[str, Any]:
+    if key not in SINGLETON_KEYS:
+        raise StateMigrationError(f"지원하지 않는 singleton입니다: {key}")
+    now = datetime.now(timezone.utc).isoformat()
+    with connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO state_singletons(key, payload_json, updated_at)
+            VALUES(?,?,?)
+            ON CONFLICT(key) DO UPDATE SET
+              payload_json=excluded.payload_json,
+              updated_at=excluded.updated_at
+            """,
+            (key, _json(value), now),
+        )
+        conn.execute(
+            "INSERT INTO audit_log(action, entity_type, entity_id, detail) VALUES(?,?,?,?)",
+            ("dual_singleton", "singleton", key, _json({"source": source, "hash": _hash(value)})),
+        )
+    return {"ok": True, "key": key, "hash": _hash(value)}
+
+
 def export_state() -> dict[str, Any]:
     state: dict[str, Any] = {k: [] for k in COLLECTION_KEYS}
     state["cfg"] = {}
@@ -132,6 +200,32 @@ def export_state() -> dict[str, Any]:
             elif row["key"] == "extra_state" and isinstance(value, dict):
                 state.update(value)
     return state
+
+
+def compare_state(state: dict[str, Any]) -> dict[str, Any]:
+    browser = validate_state(state)
+    sqlite_state = export_state()
+    checks: list[dict[str, Any]] = []
+
+    for key in COLLECTION_KEYS:
+        left = {str(x.get("id")): _hash(x) for x in browser.get(key) or []}
+        right = {str(x.get("id")): _hash(x) for x in sqlite_state.get(key) or []}
+        missing = sorted(set(left) - set(right))
+        extra = sorted(set(right) - set(left))
+        changed = sorted(k for k in set(left) & set(right) if left[k] != right[k])
+        checks.append({
+            "key": key,
+            "ok": not missing and not extra and not changed,
+            "browserCount": len(left),
+            "sqliteCount": len(right),
+            "missingInSqlite": missing,
+            "extraInSqlite": extra,
+            "changed": changed,
+        })
+
+    cfg_ok = _hash(browser.get("cfg") or {}) == _hash(sqlite_state.get("cfg") or {})
+    checks.append({"key": "cfg", "ok": cfg_ok})
+    return {"ok": all(x["ok"] for x in checks), "checks": checks}
 
 
 def status() -> dict[str, Any]:
