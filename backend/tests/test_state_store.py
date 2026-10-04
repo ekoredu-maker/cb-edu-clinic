@@ -63,3 +63,34 @@ def test_replace_is_atomic(tmp_path):
     exported = store_module.export_state()
     assert exported["stf"] == original["stf"]
     assert exported["stu"] == original["stu"]
+
+
+def test_incremental_upsert_delete_and_compare(tmp_path):
+    _use_temp_db(tmp_path)
+    state = sample_state()
+    store_module.import_state(state, source="test", replace=True)
+
+    updated_student = {"id": "st1", "nm": "학생1수정", "sc": "가상초", "region": "제천", "memo": "보존"}
+    store_module.upsert_record("stu", updated_student)
+    state["stu"] = [updated_student]
+    assert store_module.compare_state(state)["ok"] is True
+
+    store_module.delete_record("trn", "t1")
+    state["trn"] = []
+    assert store_module.compare_state(state)["ok"] is True
+
+    store_module.save_singleton("cfg", {"org": "제천교육지원청", "regions": ["제천"]})
+    state["cfg"] = {"org": "제천교육지원청", "regions": ["제천"]}
+    assert store_module.compare_state(state)["ok"] is True
+
+
+def test_compare_reports_changed_records(tmp_path):
+    _use_temp_db(tmp_path)
+    state = sample_state()
+    store_module.import_state(state, source="test", replace=True)
+    browser = sample_state()
+    browser["stu"][0]["nm"] = "브라우저에서변경"
+    result = store_module.compare_state(browser)
+    assert result["ok"] is False
+    stu_check = next(x for x in result["checks"] if x["key"] == "stu")
+    assert stu_check["changed"] == ["st1"]
