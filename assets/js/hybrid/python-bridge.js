@@ -45,18 +45,31 @@ const PythonBridge = (() => {
     return { blob: await response.blob(), filename };
   }
 
+  async function post(path, body) {
+    return request(path, { method:'POST', body:JSON.stringify(body || {}) });
+  }
+
   async function health() { return request('/api/health'); }
-  async function statistics(payload) { return request('/api/statistics', { method: 'POST', body: JSON.stringify(payload) }); }
-  async function verification(payload) { return request('/api/verification', { method: 'POST', body: JSON.stringify(payload) }); }
-  async function settlement(payload) { return request('/api/settlement', { method: 'POST', body: JSON.stringify(payload) }); }
+  async function statistics(payload) { return post('/api/statistics', payload); }
+  async function verification(payload) { return post('/api/verification', payload); }
+  async function settlement(payload) { return post('/api/settlement', payload); }
   async function storageStatus() { return request('/api/storage/status'); }
   async function storageImport(state, options={}) {
-    return request('/api/storage/import', {
-      method: 'POST',
-      body: JSON.stringify({ state, source: options.source || 'browser-state', replace: options.replace !== false }),
-    });
+    return post('/api/storage/import', { state, source: options.source || 'browser-state', replace: options.replace !== false });
   }
   async function storageExport() { return request('/api/storage/export'); }
+  async function storageUpsert(entityType, record, source='dual-write') {
+    return post('/api/storage/upsert', { entityType, record, source });
+  }
+  async function storageDelete(entityType, id, source='dual-write') {
+    return post('/api/storage/delete', { entityType, id, source });
+  }
+  async function storageSingleton(key, value, source='dual-write') {
+    return post('/api/storage/singleton', { key, value, source });
+  }
+  async function storageCompare(state) {
+    return post('/api/storage/compare', { state });
+  }
   async function exportFile(path, payload) { return requestBlob(path, payload, 'POST'); }
   async function downloadStorageBackup() { return requestBlob('/api/storage/backup.json', null, 'GET'); }
 
@@ -66,7 +79,8 @@ const PythonBridge = (() => {
 
   return {
     isAvailable, health, statistics, verification, settlement,
-    storageStatus, storageImport, storageExport, downloadStorageBackup,
+    storageStatus, storageImport, storageExport, storageUpsert, storageDelete,
+    storageSingleton, storageCompare, downloadStorageBackup,
     exportFile, setBaseUrl
   };
 })();
