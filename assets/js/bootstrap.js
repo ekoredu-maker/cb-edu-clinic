@@ -36,6 +36,7 @@ window.addEventListener('load', async () => {
   let storageLabel = '';
   let syncLabel = '';
   let sourceLabel = '';
+  let offlineLabel = '';
   let dataLabel = ' · 데이터원본 Browser';
 
   if (PythonBridge.isAvailable()) {
@@ -43,12 +44,14 @@ window.addEventListener('load', async () => {
       const health = await PythonBridge.health();
       if (health?.ok) {
         hybridLabel = 'Hybrid/Python';
+        if (health.offline?.ready) offlineLabel = ' · 완전오프라인';
         const readyTemplates = Object.values(health.templates || {}).filter(Boolean).length;
         const totalTemplates = Object.keys(health.templates || {}).length;
         if (totalTemplates) templateLabel = ` · HWPX ${readyTemplates}/${totalTemplates}`;
         const stored = health.storage?.totalRecords || 0;
         storageLabel = ` · SQLite ${stored}건`;
         window.__V13_STORAGE_STATUS__ = health.storage || null;
+        window.__V13_OFFLINE_STATUS__ = health.offline || null;
 
         const readSource = await chooseReadSource();
         if (readSource.source === 'sqlite') dataLabel = ' · 데이터원본 SQLite';
@@ -82,7 +85,7 @@ window.addEventListener('load', async () => {
     }
   }
 
-  setHeader([`V13.0 Alpha · ${hybridLabel}`, regressionLabel, sourceLabel, dataLabel, templateLabel, storageLabel, syncLabel]);
+  setHeader([`V13.0 Alpha · ${hybridLabel}`, offlineLabel, regressionLabel, sourceLabel, dataLabel, templateLabel, storageLabel, syncLabel]);
   document.title = '학습클리닉 통합관리 V13.0 Alpha';
 
   window.addEventListener('v13:dual-write-status', (event) => {
