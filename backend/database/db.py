@@ -1,8 +1,8 @@
-from pathlib import Path
 import sqlite3
 
-BASE_DIR = Path(__file__).resolve().parents[2]
-DATA_DIR = BASE_DIR / "data"
+from runtime_paths import user_data_dir
+
+DATA_DIR = user_data_dir()
 DB_PATH = DATA_DIR / "clinic_v13.db"
 
 SCHEMA = """
@@ -62,5 +62,5 @@ def init_db() -> None:
         conn.executescript(SCHEMA)
         conn.execute(
             "INSERT OR REPLACE INTO meta(key, value) VALUES(?, ?)",
-            ("schema_version", "13.0.0-alpha5"),
+            ("schema_version", "13.0.0-alpha10"),
         )
