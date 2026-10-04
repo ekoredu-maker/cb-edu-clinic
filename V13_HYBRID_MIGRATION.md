@@ -13,6 +13,7 @@
 7. Python이 없는 GitHub/PWA 환경에서는 기존 기능을 계속 사용할 수 있어야 한다.
 8. 데이터 저장소 전환은 브라우저 저장소 → SQLite 병행 → 검증 후 SQLite 원본 승격 순으로 진행한다.
 9. 운영 규모 전환 전에는 Windows CI에서 대량 회귀시험을 통과해야 한다.
+10. Windows 배포는 one-folder 포터블을 먼저 안정화하고, 데이터 폴더는 프로그램 업데이트와 분리해 보존한다.
 
 ## 단계별 진행
 
@@ -104,6 +105,25 @@
 - 순서 불일치 검출 및 추가/삭제 순서 유지 계약 테스트 추가
 - CI에 `read-source.js` JavaScript 문법 검사 추가
 
+### 10단계 — Windows 포터블 배포
+- PyInstaller one-folder 배포 구성
+- 최종 사용자 PC에 Python 별도 설치 불필요
+- pywebview 창에서 브라우저 주소창 없이 데스크톱 프로그램 형태로 실행
+- `file://` 대신 FastAPI가 HTML/JS/CSS까지 같은 동적 포트에서 제공
+- 고정 포트를 사용하지 않고 매 실행 시 빈 `127.0.0.1` 포트를 자동 할당
+- 서버 준비 완료(`/api/health`)를 확인한 뒤 pywebview 창을 표시
+- `runtime_paths.py`로 개발환경/PyInstaller `_MEIPASS`/실행파일 폴더 경로를 통합 관리
+- `portable.flag`가 있으면 SQLite·생성문서를 실행 폴더의 `data/` 아래에 저장
+- 일반 설치형 모드에서는 `%LOCALAPPDATA%/CB-Edu-Clinic-V13` 사용 가능
+- 프로그램 업데이트 시 `data/` 폴더만 보존하면 업무데이터 유지
+- `packaging/clinic_v13.spec` 및 `packaging/build_portable.ps1` 추가
+- GitHub Actions `V13 Portable Build`에서 Windows 자동 빌드
+- 빌드 전 Python 전체 회귀시험과 하이브리드 JavaScript 문법검사 수행
+- 빌드 후 EXE/프론트엔드/portable.flag 구조 검사
+- 생성된 EXE를 `--self-test`로 직접 실행해 내부 FastAPI health, 패키지된 index.html, SQLite 생성까지 검증
+- 검증 통과 후 `학습클리닉_V13_Windows_Portable` 아티팩트 자동 업로드
+- 2026-10-04 Windows CI에서 회귀 17건, JS 문법검사, PyInstaller build, EXE self-test, 아티팩트 업로드 전체 PASS
+
 ## HWPX 템플릿
 `backend/templates/` 아래에 실제 기관 원본 서식을 둔다.
 
@@ -126,7 +146,28 @@ V12의 현재 구조를 처음부터 완전 정규화하면 호환성 손실 위
 6. 운영자가 확인 후 Browser 기준 SQLite 복구 가능
 7. 저장은 계속 브라우저 + SQLite 이중화
 
-## 다음 단계
+## 포터블 배포 구조
+기본 배포는 one-folder 방식이다.
+
+```text
+학습클리닉_V13/
+├─ 학습클리닉_V13.exe
+├─ portable.flag
+├─ 사용안내.txt
+├─ data/
+│  ├─ clinic_v13.db
+│  └─ generated/
+└─ _internal/
+   ├─ index.html
+   ├─ assets/
+   ├─ icons/
+   └─ Python 및 프로그램 런타임
+```
+
+업데이트 시에는 새 프로그램 폴더를 배포하되 기존 `data/`를 반드시 보존한다. 운영 PC에서는 네트워크 공유폴더에서 직접 실행하는 것보다 로컬 폴더에 복사해 실행하는 방식을 권장한다.
+
+## 현재 제한 및 다음 단계
 1. 실제 지급명세서/집행내역/관리부 HWPX 원본 연결 및 표 행 반복 매퍼 구현
-2. PyInstaller 포터블 Windows 배포 구성
-3. 실제 운영 데이터로 최종 UAT 및 복구 시나리오 검증
+2. 실제 운영 데이터로 최종 UAT 및 백업·복구 시나리오 검증
+3. 현재 `index.html`의 일부 외부 CDN 자산(Chart.js, SheetJS, 웹폰트)을 로컬 자산으로 전환하거나 Python 기능으로 대체해 완전 오프라인 배포 보강
+4. one-folder 안정화 후 필요 시 one-file 배포를 별도 검토
