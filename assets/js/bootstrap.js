@@ -6,6 +6,7 @@ import { installRegressionTools, runHybridRegression } from './hybrid/regression
 import { installDocumentExports } from './hybrid/document-export.js';
 import { installStorageMigrationControls } from './hybrid/storage-migration.js';
 import { installDualWrite, installDualWriteTools, compareDualWrite } from './hybrid/dual-write.js';
+import { installAuthoritativeEngine } from './hybrid/authoritative-engine.js';
 
 bootStoreDevtools();
 installStatisticsOverrides();
@@ -32,6 +33,7 @@ window.addEventListener('load', async () => {
   let templateLabel = '';
   let storageLabel = '';
   let syncLabel = '';
+  let sourceLabel = '';
 
   if (PythonBridge.isAvailable()) {
     try {
@@ -56,14 +58,22 @@ window.addEventListener('load', async () => {
         const ym = document.getElementById('ver-month')?.value || '';
         const regression = await runHybridRegression({ ym });
         regressionLabel = regression.ok === true ? ' · 검증 PASS' : regression.ok === false ? ' · 검증 DIFF' : '';
+
+        if (regression.ok === true) {
+          await installAuthoritativeEngine();
+          sourceLabel = ' · 계산원본 Python';
+        } else {
+          sourceLabel = ' · 계산원본 JS(보호모드)';
+        }
       }
     } catch (e) {
       console.warn('[V13] Python engine connection/regression failed:', e);
       hybridLabel = 'Hybrid/Offline';
+      sourceLabel = ' · 계산원본 JS';
     }
   }
 
-  setHeader([`V13.0 Alpha · ${hybridLabel}`, regressionLabel, templateLabel, storageLabel, syncLabel]);
+  setHeader([`V13.0 Alpha · ${hybridLabel}`, regressionLabel, sourceLabel, templateLabel, storageLabel, syncLabel]);
   document.title = '학습클리닉 통합관리 V13.0 Alpha';
 
   window.addEventListener('v13:dual-write-status', (event) => {
