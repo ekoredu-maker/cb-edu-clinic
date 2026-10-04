@@ -1,0 +1,83 @@
+name: V13 Portable Build
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [v13-hybrid-migration]
+    paths:
+      - 'backend/**'
+      - 'assets/**'
+      - 'icons/**'
+      - 'index.html'
+      - 'manifest.webmanifest'
+      - 'sw.js'
+      - 'packaging/**'
+      - '.github/workflows/v13-portable-build.yml'
+
+jobs:
+  build-windows-portable:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+          cache-dependency-path: |
+            backend/requirements.txt
+            backend/requirements-dev.txt
+            backend/requirements-build.txt
+
+      - name: Install build dependencies
+        shell: pwsh
+        run: python -m pip install -r backend/requirements-build.txt
+
+      - name: Run regression tests
+        shell: pwsh
+        working-directory: backend
+        run: python -m pytest -q
+
+      - name: Check hybrid JavaScript syntax
+        shell: pwsh
+        run: |
+          node --check assets/js/bootstrap.js
+          node --check assets/js/hybrid/python-bridge.js
+          node --check assets/js/hybrid/regression.js
+          node --check assets/js/hybrid/engine-source.js
+          node --check assets/js/hybrid/authoritative-engine.js
+          node --check assets/js/hybrid/dual-write.js
+          node --check assets/js/hybrid/storage-migration.js
+          node --check assets/js/hybrid/read-source.js
+          node --check assets/js/hybrid/document-export.js
+
+      - name: Build portable one-folder package
+        shell: pwsh
+        run: |
+          python -m PyInstaller --noconfirm packaging/clinic_v13.spec
+          New-Item -ItemType File -Force 'dist/학습클리닉_V13/portable.flag' | Out-Null
+          New-Item -ItemType Directory -Force 'dist/학습클리닉_V13/data' | Out-Null
+          @'
+          충북종합학습클리닉 업무관리 프로그램 V13
+          실행: 학습클리닉_V13.exe
+          Python 별도 설치 불필요
+          data 폴더는 실제 업무데이터이므로 업데이트 시 보존하세요.
+          '@ | Set-Content -Path 'dist/학습클리닉_V13/사용안내.txt' -Encoding UTF8
+
+      - name: Verify package structure
+        shell: pwsh
+        run: |
+          if (!(Test-Path 'dist/학습클리닉_V13/학습클리닉_V13.exe')) { throw 'EXE missing' }
+          if (!(Test-Path 'dist/학습클리닉_V13/_internal/index.html')) { throw 'index.html missing' }
+          if (!(Test-Path 'dist/학습클리닉_V13/_internal/assets/js/bootstrap.js')) { throw 'frontend assets missing' }
+          if (!(Test-Path 'dist/학습클리닉_V13/portable.flag')) { throw 'portable.flag missing' }
+
+      - name: Upload portable package
+        uses: actions/upload-artifact@v4
+        with:
+          name: 학습클리닉_V13_Windows_Portable
+          path: dist/학습클리닉_V13
+          if-no-files-found: error
+          retention-days: 14
