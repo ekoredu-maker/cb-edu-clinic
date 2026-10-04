@@ -44,4 +44,5 @@ jobs:
           node --check assets/js/hybrid/authoritative-engine.js
           node --check assets/js/hybrid/dual-write.js
           node --check assets/js/hybrid/storage-migration.js
+          node --check assets/js/hybrid/read-source.js
           node --check assets/js/hybrid/document-export.js
