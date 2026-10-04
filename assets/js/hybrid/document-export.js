@@ -24,16 +24,10 @@ async function download(path, payload) {
 }
 
 export async function exportPaySlipHwpx() {
-  if (!PythonBridge.isAvailable()) {
-    notify('HWPX 출력은 Windows 하이브리드 버전에서 사용할 수 있습니다.', 'warning');
-    return;
-  }
+  if (!PythonBridge.isAvailable()) return notify('HWPX 출력은 Windows 하이브리드 버전에서 사용할 수 있습니다.', 'warning');
   const staffId = document.getElementById('pay-stf-sel')?.value || '';
   const ym = document.getElementById('pay-ym')?.value || '';
-  if (!staffId || !ym) {
-    notify('지원단과 대상 월을 선택하세요.', 'warning');
-    return;
-  }
+  if (!staffId || !ym) return notify('지원단과 대상 월을 선택하세요.', 'warning');
   try {
     const filename = await download('/api/export/pay_slip.hwpx', { state: getState(), staffId, ym });
     notify(`HWPX 생성 완료: ${filename}`, 'success');
@@ -43,20 +37,27 @@ export async function exportPaySlipHwpx() {
 }
 
 export async function exportExecutionHwpx() {
-  if (!PythonBridge.isAvailable()) {
-    notify('HWPX 출력은 Windows 하이브리드 버전에서 사용할 수 있습니다.', 'warning');
-    return;
-  }
+  if (!PythonBridge.isAvailable()) return notify('HWPX 출력은 Windows 하이브리드 버전에서 사용할 수 있습니다.', 'warning');
   const ym = document.getElementById('exec-ym')?.value || '';
-  if (!ym) {
-    notify('대상 월을 선택하세요.', 'warning');
-    return;
-  }
+  if (!ym) return notify('대상 월을 선택하세요.', 'warning');
   try {
     const filename = await download('/api/export/execution_report.hwpx', { state: getState(), ym });
     notify(`HWPX 생성 완료: ${filename}`, 'success');
   } catch (e) {
     notify(e.message || 'HWPX 생성에 실패했습니다.', 'warning');
+  }
+}
+
+export async function exportManagerBookHwpx() {
+  if (!PythonBridge.isAvailable()) return notify('HWPX 출력은 Windows 하이브리드 버전에서 사용할 수 있습니다.', 'warning');
+  const staffId = document.getElementById('mgr-stf-sel')?.value || '';
+  const ym = document.getElementById('mgr-ym')?.value || '';
+  if (!staffId || !ym) return notify('지원단과 대상 월을 선택하세요.', 'warning');
+  try {
+    const filename = await download('/api/export/manager_book.hwpx', { state: getState(), staffId, ym });
+    notify(`관리부 HWPX 생성 완료: ${filename}`, 'success');
+  } catch (e) {
+    notify(e.message || '관리부 HWPX 생성에 실패했습니다.', 'warning');
   }
 }
 
@@ -74,11 +75,13 @@ function addButton(afterSelector, text, handler) {
 export function installDocumentExports() {
   window.exportPaySlipHwpx = exportPaySlipHwpx;
   window.exportExecutionHwpx = exportExecutionHwpx;
+  window.exportManagerBookHwpx = exportManagerBookHwpx;
+
+  if (!PythonBridge.isAvailable()) return;
 
   addButton('button[onclick="exportPaySlipXlsx()"]', '📄 HWPX 생성', exportPaySlipHwpx);
   addButton('button[onclick="exportExecReportXlsx()"]', '📄 HWPX 생성', exportExecutionHwpx);
-
-  if (!PythonBridge.isAvailable()) return;
+  addButton('button[onclick="exportMgrBookXlsx()"]', '📄 HWPX 생성', exportManagerBookHwpx);
 
   const oldPayXlsx = window.exportPaySlipXlsx;
   window.exportPaySlipXlsx = async function() {
