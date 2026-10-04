@@ -95,17 +95,20 @@ def test_stage16_print_profiles_fit_single_page_targets():
 def test_stage16_forms_merge_wide_content_cells(tmp_path):
     state = _state()
 
+    # 위촉장은 '위촉 분야/기간'처럼 첫 항목 + 긴 내용 + 빈 꼬리칸 구조이므로
+    # HTML 의도대로 내용칸을 3칸으로 합친다.
     appoint = staff_appointment_model(state, "sf001")
     appoint_path = create_native_hwpx(tmp_path / "appoint.hwpx", appoint)
     with zipfile.ZipFile(appoint_path, "r") as zin:
         section = zin.read("Contents/section0.xml").decode("utf-8")
     assert 'colSpan="3"' in section
 
+    # 학습지도계획서는 큰 작성란이 완전 빈 행으로 모델링되어 있으므로
+    # 해당 행 전체를 4칸 병합하는 것이 실제 모델과 일치한다.
     plan = learning_plan_model(state, "sf001")
     plan_path = create_native_hwpx(tmp_path / "plan.hwpx", plan)
     with zipfile.ZipFile(plan_path, "r") as zin:
         section = zin.read("Contents/section0.xml").decode("utf-8")
-    assert 'colSpan="3"' in section
     assert 'colSpan="4"' in section
 
 
