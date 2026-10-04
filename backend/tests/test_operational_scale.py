@@ -5,7 +5,7 @@ import database.state_store as store_module
 from domain.statistics import build_statistics
 from domain.verification import verify_records
 from domain.settlement import build_settlement
-from tests.operational_fixture import build_operational_state
+from tests.load_fixture import build_large_state
 
 
 def _use_temp_db(tmp_path: Path):
@@ -17,7 +17,7 @@ def _use_temp_db(tmp_path: Path):
 
 def test_operational_scale_regression(tmp_path):
     _use_temp_db(tmp_path)
-    state = build_operational_state()
+    state = build_large_state()
 
     assert len(state["stf"]) == 50
     assert len(state["stu"]) == 1500
