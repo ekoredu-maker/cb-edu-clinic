@@ -76,6 +76,14 @@ def _find_row(ws, first_cell_value: str) -> int:
     raise AssertionError(f"Excel에서 '{first_cell_value}' 행을 찾지 못했습니다.")
 
 
+def _find_row_any_cell(ws, value: str) -> int:
+    for row in range(1, ws.max_row + 1):
+        for col in range(1, ws.max_column + 1):
+            if ws.cell(row, col).value == value:
+                return row
+    raise AssertionError(f"Excel에서 '{value}' 행을 찾지 못했습니다.")
+
+
 def _write_reports(output_dir: Path, report: dict[str, Any]) -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
     report["summary"] = {
@@ -230,8 +238,6 @@ def run_uat(output_dir: Path) -> dict[str, Any]:
         step("수정·추가·삭제·설정변경 및 SQLite 이중쓰기", mutate_and_dual_write)
 
         def restart_reload() -> dict[str, Any]:
-            # 모든 state_store 작업은 호출마다 새 SQLite 연결을 사용한다.
-            # 스키마 초기화를 다시 수행한 뒤 디스크의 동일 DB를 재로드해 재기동 상황을 검증한다.
             db_module.init_db()
             reloaded = store_module.export_state()
             _assert_equal(_sha256(reloaded), _sha256(ctx["working"]), "재기동 후 상태 해시")
@@ -309,8 +315,8 @@ def run_uat(output_dir: Path) -> dict[str, Any]:
                 restored["cfg"].get("org") or "",
             )
             wb = load_workbook(execution_path, data_only=True)
-            ws = wb["월별집행내역"]
-            total_row = _find_row(ws, "합계")
+            ws = wb["집행내역서"]
+            total_row = _find_row_any_cell(ws, "합계")
             ex = settlement["executed"]
             _assert_equal(ws.cell(total_row, 4).value, ex["coach"], "집행내역 코칭 합계")
             _assert_equal(ws.cell(total_row, 6).value, ex["cls"], "집행내역 협력 합계")
@@ -330,10 +336,10 @@ def run_uat(output_dir: Path) -> dict[str, Any]:
             )
             pay_wb = load_workbook(pay_path, data_only=True)
             pay_ws = pay_wb["지급명세서"]
-            pay_row = _find_row(pay_ws, "세전 지급액")
+            pay_row = _find_row(pay_ws, "단가 합계 / 지급액(총액)")
             summary = settlement["summaryByStaff"][staff_id]
             _assert_equal(pay_ws.cell(pay_row, 2).value, summary["gross"], "지급명세서 세전")
-            _assert_equal(pay_ws.cell(pay_row, 4).value, summary["tax"], "지급명세서 공제")
+            _assert_equal(pay_ws.cell(pay_row, 4).value, -summary["tax"], "지급명세서 공제")
             _assert_equal(pay_ws.cell(pay_row, 6).value, summary["net"], "지급명세서 실지급")
             return {
                 "executionTotal": ex["total"],
