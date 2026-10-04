@@ -37,6 +37,10 @@ jobs:
         shell: pwsh
         run: python uat_runner.py --output-dir ../.build/uat
 
+      - name: Generate synthetic HWPX Hancom UAT set
+        shell: pwsh
+        run: python hwpx_uat_pack.py --output-dir ../.build/hwpx-uat
+
       - name: Check hybrid JavaScript syntax
         shell: pwsh
         working-directory: .
@@ -60,4 +64,13 @@ jobs:
             .build/uat/uat_report.json
             .build/uat/uat_report.md
           if-no-files-found: warn
+          retention-days: 14
+
+      - name: Upload HWPX Hancom UAT sample set
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: V13_HWPX_Hancom_UAT_Samples
+          path: .build/hwpx-uat
+          if-no-files-found: error
           retention-days: 14
