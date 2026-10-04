@@ -14,9 +14,7 @@ const status = {
   lastAt: '',
 };
 
-function snapshot(){
-  return { ...status };
-}
+function snapshot(){ return { ...status }; }
 
 function publish(){
   window.__V13_DUAL_WRITE__ = snapshot();
@@ -52,16 +50,11 @@ function markFailure(action, error){
 
 function enqueue(action, task){
   markStart(action);
-  queue = queue
-    .then(task)
-    .then(() => markSuccess(action))
-    .catch(err => markFailure(action, err));
+  queue = queue.then(task).then(() => markSuccess(action)).catch(err => markFailure(action, err));
   return queue;
 }
 
-function currentState(){
-  return window.ClinicApp?.state || {};
-}
+function currentState(){ return window.ClinicApp?.state || {}; }
 
 function normalizeMeta(record){
   if (!record || record.id !== 'cfg') return null;
@@ -73,14 +66,12 @@ export function installDualWrite(){
   if (installed || !PythonBridge.isAvailable() || !window.ClinicApp) return false;
   const app = window.ClinicApp;
   if (typeof app.save !== 'function' || typeof app.removeItem !== 'function' || typeof app.saveAll !== 'function') return false;
-  installed = true;
-  status.enabled = true;
 
   const originalSave = app.save.bind(app);
   const originalRemove = app.removeItem.bind(app);
   const originalSaveAll = app.saveAll.bind(app);
 
-  app.save = async function(store, record, ...rest){
+  const wrappedSave = async function(store, record, ...rest){
     const result = await originalSave(store, record, ...rest);
     if (COLLECTIONS.has(store) && record?.id != null) {
       enqueue(`upsert:${store}:${record.id}`, () => PythonBridge.storageUpsert(store, record));
@@ -91,21 +82,29 @@ export function installDualWrite(){
     return result;
   };
 
-  app.removeItem = async function(store, id, ...rest){
+  const wrappedRemove = async function(store, id, ...rest){
     const result = await originalRemove(store, id, ...rest);
-    if (COLLECTIONS.has(store)) {
-      enqueue(`delete:${store}:${id}`, () => PythonBridge.storageDelete(store, id));
-    }
+    if (COLLECTIONS.has(store)) enqueue(`delete:${store}:${id}`, () => PythonBridge.storageDelete(store, id));
     return result;
   };
 
-  app.saveAll = async function(...args){
+  const wrappedSaveAll = async function(...args){
     const result = await originalSaveAll(...args);
-    const state = currentState();
-    enqueue('full-sync', () => PythonBridge.storageImport(state, { source:'dual-write-saveAll', replace:true }));
+    enqueue('full-sync', () => PythonBridge.storageImport(currentState(), { source:'dual-write-saveAll', replace:true }));
     return result;
   };
 
+  app.save = wrappedSave;
+  app.removeItem = wrappedRemove;
+  app.saveAll = wrappedSaveAll;
+
+  // V12의 전역 함수 직접 호출 경로도 동일 래퍼로 연결한다.
+  if (typeof window.save === 'function') window.save = wrappedSave;
+  if (typeof window.removeItem === 'function') window.removeItem = wrappedRemove;
+  if (typeof window.saveAll === 'function') window.saveAll = wrappedSaveAll;
+
+  installed = true;
+  status.enabled = true;
   publish();
   return true;
 }
@@ -118,8 +117,7 @@ export async function compareDualWrite(){
     status.healthy = Boolean(result.ok);
     status.lastAction = 'compare';
     status.lastAt = new Date().toISOString();
-    if (!result.ok) status.lastError = '브라우저 데이터와 SQLite 데이터가 일치하지 않습니다.';
-    else status.lastError = '';
+    status.lastError = result.ok ? '' : '브라우저 데이터와 SQLite 데이터가 일치하지 않습니다.';
     publish();
     return { available:true, ...result };
   } catch (error) {
