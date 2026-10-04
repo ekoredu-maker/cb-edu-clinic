@@ -11,6 +11,7 @@ from .db import connect
 COLLECTION_KEYS = ("stf", "stu", "mat", "trn")
 SINGLETON_KEYS = ("cfg",)
 KNOWN_KEYS = set(COLLECTION_KEYS) | set(SINGLETON_KEYS)
+ORDER_KEY = "collection_order"
 
 
 class StateMigrationError(RuntimeError):
@@ -58,6 +59,31 @@ def validate_state(state: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
+def _load_collection_order(conn) -> dict[str, list[str]]:
+    row = conn.execute("SELECT payload_json FROM state_singletons WHERE key=?", (ORDER_KEY,)).fetchone()
+    if not row:
+        return {k: [] for k in COLLECTION_KEYS}
+    try:
+        raw = json.loads(row["payload_json"])
+    except Exception:
+        raw = {}
+    return {k: [str(x) for x in (raw.get(k) or [])] for k in COLLECTION_KEYS}
+
+
+def _save_collection_order(conn, order: dict[str, list[str]], now: str | None = None) -> None:
+    now = now or datetime.now(timezone.utc).isoformat()
+    conn.execute(
+        """
+        INSERT INTO state_singletons(key, payload_json, updated_at)
+        VALUES(?,?,?)
+        ON CONFLICT(key) DO UPDATE SET
+          payload_json=excluded.payload_json,
+          updated_at=excluded.updated_at
+        """,
+        (ORDER_KEY, _json(order), now),
+    )
+
+
 def import_state(state: dict[str, Any], *, source: str = "v12-json", replace: bool = True) -> dict[str, Any]:
     normalized = validate_state(state)
     record_count = sum(len(normalized.get(k) or []) for k in COLLECTION_KEYS)
@@ -70,9 +96,11 @@ def import_state(state: dict[str, Any], *, source: str = "v12-json", replace: bo
                 conn.execute("DELETE FROM records")
                 conn.execute("DELETE FROM state_singletons")
 
+            collection_order: dict[str, list[str]] = {k: [] for k in COLLECTION_KEYS}
             for entity_type in COLLECTION_KEYS:
                 for idx, row in enumerate(normalized.get(entity_type) or []):
                     rid = _record_id(entity_type, row, idx)
+                    collection_order[entity_type].append(rid)
                     conn.execute(
                         """
                         INSERT INTO records(entity_type, entity_id, payload_json, updated_at)
@@ -107,6 +135,7 @@ def import_state(state: dict[str, Any], *, source: str = "v12-json", replace: bo
                 """,
                 (_json(extra), now),
             )
+            _save_collection_order(conn, collection_order, now)
             conn.execute(
                 "INSERT INTO migration_history(source, mode, record_count, detail) VALUES(?,?,?,?)",
                 (source, "replace" if replace else "merge", record_count, _json({"keys": sorted(normalized.keys())})),
@@ -132,6 +161,9 @@ def upsert_record(entity_type: str, record: dict[str, Any], *, source: str = "du
     now = datetime.now(timezone.utc).isoformat()
     payload = _json(record)
     with connect() as conn:
+        exists = conn.execute(
+            "SELECT 1 FROM records WHERE entity_type=? AND entity_id=?", (entity_type, rid)
+        ).fetchone()
         conn.execute(
             """
             INSERT INTO records(entity_type, entity_id, payload_json, updated_at)
@@ -142,6 +174,11 @@ def upsert_record(entity_type: str, record: dict[str, Any], *, source: str = "du
             """,
             (entity_type, rid, payload, now),
         )
+        if not exists:
+            order = _load_collection_order(conn)
+            if rid not in order[entity_type]:
+                order[entity_type].append(rid)
+                _save_collection_order(conn, order, now)
         conn.execute(
             "INSERT INTO audit_log(action, entity_type, entity_id, detail) VALUES(?,?,?,?)",
             ("dual_upsert", entity_type, rid, _json({"source": source, "hash": _hash(record)})),
@@ -155,8 +192,13 @@ def delete_record(entity_type: str, entity_id: str, *, source: str = "dual-write
     rid = str(entity_id or "")
     if not rid:
         raise StateMigrationError("삭제할 id가 필요합니다.")
+    now = datetime.now(timezone.utc).isoformat()
     with connect() as conn:
         cur = conn.execute("DELETE FROM records WHERE entity_type=? AND entity_id=?", (entity_type, rid))
+        order = _load_collection_order(conn)
+        if rid in order[entity_type]:
+            order[entity_type] = [x for x in order[entity_type] if x != rid]
+            _save_collection_order(conn, order, now)
         conn.execute(
             "INSERT INTO audit_log(action, entity_type, entity_id, detail) VALUES(?,?,?,?)",
             ("dual_delete", entity_type, rid, _json({"source": source, "deleted": cur.rowcount})),
@@ -190,9 +232,22 @@ def export_state() -> dict[str, Any]:
     state: dict[str, Any] = {k: [] for k in COLLECTION_KEYS}
     state["cfg"] = {}
     with connect() as conn:
-        for row in conn.execute("SELECT entity_type, payload_json FROM records ORDER BY entity_type, entity_id"):
-            if row["entity_type"] in COLLECTION_KEYS:
-                state[row["entity_type"]].append(json.loads(row["payload_json"]))
+        order = _load_collection_order(conn)
+        records_by_type: dict[str, dict[str, Any]] = {k: {} for k in COLLECTION_KEYS}
+        for row in conn.execute("SELECT entity_type, entity_id, payload_json FROM records"):
+            entity_type = row["entity_type"]
+            if entity_type in COLLECTION_KEYS:
+                records_by_type[entity_type][str(row["entity_id"])] = json.loads(row["payload_json"])
+        for key in COLLECTION_KEYS:
+            rows = records_by_type[key]
+            seen: set[str] = set()
+            for rid in order.get(key) or []:
+                if rid in rows:
+                    state[key].append(rows[rid])
+                    seen.add(rid)
+            for rid in sorted(set(rows) - seen):
+                state[key].append(rows[rid])
+
         for row in conn.execute("SELECT key, payload_json FROM state_singletons"):
             value = json.loads(row["payload_json"])
             if row["key"] == "cfg":
@@ -208,19 +263,25 @@ def compare_state(state: dict[str, Any]) -> dict[str, Any]:
     checks: list[dict[str, Any]] = []
 
     for key in COLLECTION_KEYS:
-        left = {str(x.get("id")): _hash(x) for x in browser.get(key) or []}
-        right = {str(x.get("id")): _hash(x) for x in sqlite_state.get(key) or []}
+        left_rows = browser.get(key) or []
+        right_rows = sqlite_state.get(key) or []
+        left = {str(x.get("id")): _hash(x) for x in left_rows}
+        right = {str(x.get("id")): _hash(x) for x in right_rows}
         missing = sorted(set(left) - set(right))
         extra = sorted(set(right) - set(left))
         changed = sorted(k for k in set(left) & set(right) if left[k] != right[k])
+        left_order = [str(x.get("id")) for x in left_rows]
+        right_order = [str(x.get("id")) for x in right_rows]
+        order_ok = left_order == right_order
         checks.append({
             "key": key,
-            "ok": not missing and not extra and not changed,
+            "ok": not missing and not extra and not changed and order_ok,
             "browserCount": len(left),
             "sqliteCount": len(right),
             "missingInSqlite": missing,
             "extraInSqlite": extra,
             "changed": changed,
+            "orderOk": order_ok,
         })
 
     cfg_ok = _hash(browser.get("cfg") or {}) == _hash(sqlite_state.get("cfg") or {})
