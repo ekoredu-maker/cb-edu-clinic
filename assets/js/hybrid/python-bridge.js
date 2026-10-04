@@ -7,16 +7,12 @@ const PythonBridge = (() => {
   }
 
   async function request(path, options = {}) {
-    if (!baseUrl) {
-      throw new Error('Python engine is not connected.');
-    }
+    if (!baseUrl) throw new Error('Python engine is not connected.');
     const response = await fetch(`${baseUrl}${path}`, {
       headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
       ...options,
     });
-    if (!response.ok) {
-      throw new Error(`Python engine error: ${response.status}`);
-    }
+    if (!response.ok) throw new Error(`Python engine error: ${response.status}`);
     return response.json();
   }
 
@@ -46,3 +42,4 @@ const PythonBridge = (() => {
 })();
 
 window.PythonBridge = PythonBridge;
+export { PythonBridge };
