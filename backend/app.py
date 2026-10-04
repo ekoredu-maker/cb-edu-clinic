@@ -2,11 +2,11 @@ from __future__ import annotations
 
 from pathlib import Path
 import json
-import tempfile
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 
 from database.db import init_db
 from database.state_store import (
@@ -22,11 +22,12 @@ from database.state_store import (
 from domain.statistics import build_statistics
 from domain.verification import verify_records
 from domain.settlement import build_settlement
+from runtime_paths import frontend_root, generated_dir, template_dir
 from services.document_context import execution_context, settlement_context
 from services.excel_service import create_execution_xlsx, create_pay_slip_xlsx
 from services.hwpx_service import HwpxTemplateError, create_from_template
 
-app = FastAPI(title="CB Edu Clinic V13 Hybrid Engine", version="13.0.0-alpha6")
+app = FastAPI(title="CB Edu Clinic V13 Hybrid Engine", version="13.0.0-alpha10")
 
 app.add_middleware(
     CORSMiddleware,
@@ -36,10 +37,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-BASE_DIR = Path(__file__).resolve().parent
-TEMPLATE_DIR = BASE_DIR / "templates"
-GENERATED_DIR = Path(tempfile.gettempdir()) / "cb_edu_clinic_v13"
-GENERATED_DIR.mkdir(parents=True, exist_ok=True)
+FRONTEND_DIR = frontend_root()
+TEMPLATE_DIR = template_dir()
+GENERATED_DIR = generated_dir()
 
 HWPX_TEMPLATES = {
     "pay_slip": "pay_slip.hwpx",
@@ -79,7 +79,7 @@ def health() -> dict:
     return {
         "ok": True,
         "engine": "python",
-        "version": "13.0.0-alpha6",
+        "version": "13.0.0-alpha10",
         "templates": template_status,
         "storage": storage_status(),
     }
@@ -253,3 +253,34 @@ def export_hwpx(template_key: str, payload: dict):
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
     return FileResponse(out, filename=out_name, media_type="application/octet-stream")
+
+
+# Packaged desktop frontend. API routes are declared first so this mount only handles UI assets.
+if (FRONTEND_DIR / "assets").exists():
+    app.mount("/assets", StaticFiles(directory=FRONTEND_DIR / "assets"), name="assets")
+if (FRONTEND_DIR / "icons").exists():
+    app.mount("/icons", StaticFiles(directory=FRONTEND_DIR / "icons"), name="icons")
+
+
+@app.get("/manifest.webmanifest", include_in_schema=False)
+def manifest_file():
+    path = FRONTEND_DIR / "manifest.webmanifest"
+    if not path.exists():
+        raise HTTPException(status_code=404)
+    return FileResponse(path, media_type="application/manifest+json")
+
+
+@app.get("/sw.js", include_in_schema=False)
+def service_worker_file():
+    path = FRONTEND_DIR / "sw.js"
+    if not path.exists():
+        raise HTTPException(status_code=404)
+    return FileResponse(path, media_type="application/javascript")
+
+
+@app.get("/", include_in_schema=False)
+def frontend_index():
+    path = FRONTEND_DIR / "index.html"
+    if not path.exists():
+        raise HTTPException(status_code=500, detail="index.html을 찾을 수 없습니다.")
+    return FileResponse(path, media_type="text/html; charset=utf-8")
