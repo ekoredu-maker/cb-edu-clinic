@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import json
 import tempfile
 
 from fastapi import FastAPI, HTTPException
@@ -8,6 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 
 from database.db import init_db
+from database.state_store import StateMigrationError, export_state, import_state, status as storage_status
 from domain.statistics import build_statistics
 from domain.verification import verify_records
 from domain.settlement import build_settlement
@@ -15,7 +17,7 @@ from services.document_context import execution_context, settlement_context
 from services.excel_service import create_execution_xlsx, create_pay_slip_xlsx
 from services.hwpx_service import HwpxTemplateError, create_from_template
 
-app = FastAPI(title="CB Edu Clinic V13 Hybrid Engine", version="13.0.0-alpha")
+app = FastAPI(title="CB Edu Clinic V13 Hybrid Engine", version="13.0.0-alpha5")
 
 app.add_middleware(
     CORSMiddleware,
@@ -64,9 +66,46 @@ def health() -> dict:
     return {
         "ok": True,
         "engine": "python",
-        "version": "13.0.0-alpha",
+        "version": "13.0.0-alpha5",
         "templates": template_status,
+        "storage": storage_status(),
     }
+
+
+@app.get("/api/storage/status")
+def get_storage_status() -> dict:
+    return {"ok": True, **storage_status()}
+
+
+@app.post("/api/storage/import")
+def storage_import(payload: dict) -> dict:
+    state = payload.get("state")
+    if state is None:
+        raise HTTPException(status_code=400, detail="state가 필요합니다.")
+    try:
+        result = import_state(
+            state,
+            source=str(payload.get("source") or "browser-state"),
+            replace=bool(payload.get("replace", True)),
+        )
+    except StateMigrationError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return {**result, "storage": storage_status()}
+
+
+@app.get("/api/storage/export")
+def storage_export() -> dict:
+    return {"ok": True, "state": export_state(), "storage": storage_status()}
+
+
+@app.get("/api/storage/backup.json")
+def storage_backup_json():
+    state = export_state()
+    stamp = __import__("datetime").datetime.now().strftime("%Y%m%d_%H%M%S")
+    filename = f"학습클리닉_V13_SQLite백업_{stamp}.json"
+    out = GENERATED_DIR / filename
+    out.write_text(json.dumps(state, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
+    return FileResponse(out, filename=filename, media_type="application/json")
 
 
 @app.post("/api/statistics")
