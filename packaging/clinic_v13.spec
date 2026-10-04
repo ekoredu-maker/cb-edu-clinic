@@ -1,17 +1,22 @@
 # -*- mode: python ; coding: utf-8 -*-
+import os
 from pathlib import Path
 from PyInstaller.utils.hooks import collect_all, collect_submodules
 
 REPO = Path(SPECPATH).resolve().parent
 BACKEND = REPO / "backend"
+FRONTEND = Path(os.environ.get("CB_CLINIC_FRONTEND_ROOT", str(REPO))).resolve()
+
+if not (FRONTEND / "index.html").exists():
+    raise RuntimeError(f"frontend index.html not found: {FRONTEND}")
 
 datas = [
-    (str(REPO / "index.html"), "."),
-    (str(REPO / "assets"), "assets"),
-    (str(REPO / "icons"), "icons"),
+    (str(FRONTEND / "index.html"), "."),
+    (str(FRONTEND / "assets"), "assets"),
+    (str(FRONTEND / "icons"), "icons"),
 ]
 for optional in ("manifest.webmanifest", "sw.js"):
-    p = REPO / optional
+    p = FRONTEND / optional
     if p.exists():
         datas.append((str(p), "."))
 
