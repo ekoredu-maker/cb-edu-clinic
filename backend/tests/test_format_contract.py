@@ -6,9 +6,22 @@ from services.format_contract import get_format_contract, list_format_contracts
 from tests.load_fixture import build_large_state
 
 
+EXPECTED_CONTRACTS = {
+    "pay_slip",
+    "execution_report",
+    "manager_book",
+    "staff_appoint",
+    "appoint_confirm",
+    "career_confirm",
+    "resign",
+    "plan_doc",
+    "timetable",
+}
+
+
 def test_embedded_html_format_contracts_are_registered():
     contracts = list_format_contracts()
-    assert set(contracts) == {"pay_slip", "execution_report", "manager_book"}
+    assert set(contracts) == EXPECTED_CONTRACTS
 
     pay = get_format_contract("pay_slip")
     assert pay["source"]["file"] == "legacy-js/10-ext-v99.js"
@@ -24,6 +37,22 @@ def test_embedded_html_format_contracts_are_registered():
     assert manager["layout"]["leftDays"] == [1, 16]
     assert manager["layout"]["rightDays"] == [17, 31]
     assert manager["verifiedStatuses"] == ["verified", "paid"]
+
+    for key in {"staff_appoint", "appoint_confirm", "career_confirm", "resign"}:
+        contract = get_format_contract(key)
+        assert contract["source"]["file"] == "legacy-js/12-patches.js"
+
+    plan = get_format_contract("plan_doc")
+    assert plan["source"]["file"] == "legacy-js/08-forms.js"
+    assert plan["showHeader"] is False
+
+    timetable = get_format_contract("timetable")
+    assert timetable["source"]["file"] == "legacy-js/08-forms.js"
+    assert timetable["columns"] == ["시간", "월", "화", "수", "목", "금", "토", "일"]
+    assert timetable["startHour"] == 8
+    assert timetable["endHour"] == 22
+    assert timetable["stepMinutes"] == 30
+    assert timetable["landscape"] is True
 
 
 def test_python_excel_outputs_follow_html_contract(tmp_path):
