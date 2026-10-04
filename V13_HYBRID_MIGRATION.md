@@ -14,6 +14,7 @@
 8. 데이터 저장소 전환은 브라우저 저장소 → SQLite 병행 → 검증 후 SQLite 원본 승격 순으로 진행한다.
 9. 운영 규모 전환 전에는 Windows CI에서 대량 회귀시험을 통과해야 한다.
 10. Windows 배포는 one-folder 포터블을 먼저 안정화하고, 데이터 폴더는 프로그램 업데이트와 분리해 보존한다.
+11. Windows 배포물의 핵심 UI·차트·Excel 기능은 외부 CDN 없이 동작해야 한다.
 
 ## 단계별 진행
 
@@ -121,8 +122,24 @@
 - 빌드 전 Python 전체 회귀시험과 하이브리드 JavaScript 문법검사 수행
 - 빌드 후 EXE/프론트엔드/portable.flag 구조 검사
 - 생성된 EXE를 `--self-test`로 직접 실행해 내부 FastAPI health, 패키지된 index.html, SQLite 생성까지 검증
-- 검증 통과 후 `학습클리닉_V13_Windows_Portable` 아티팩트 자동 업로드
+- 검증 통과 후 Windows 포터블 아티팩트 자동 업로드
 - 2026-10-04 Windows CI에서 회귀 17건, JS 문법검사, PyInstaller build, EXE self-test, 아티팩트 업로드 전체 PASS
+
+### 11단계 — 완전 오프라인 Windows 배포
+- `PythonBridge`가 `127.0.0.1`/`localhost` same-origin 환경을 자동 감지해 별도 `?api=` 없이 Python 엔진 연결
+- GitHub/PWA 도메인에서는 same-origin Python 자동 연결을 하지 않아 기존 브라우저 모드 유지
+- `packaging/prepare_offline_bundle.py`로 배포 전용 프론트엔드 스테이징 생성
+- Chart.js `4.4.0`과 SheetJS `0.18.5`를 npm의 정확한 버전으로 설치해 `assets/vendor/`에 로컬 포함
+- 외부 Pretendard 웹폰트 참조 제거 후 Windows 시스템 글꼴 폴백 사용
+- 제3자 라이브러리 버전/라이선스 메타데이터를 배포물에 포함
+- 오프라인 전용 service worker를 생성해 스테이징의 UI 자산을 모두 캐시 대상으로 구성
+- PyInstaller spec이 `CB_CLINIC_FRONTEND_ROOT`를 통해 오프라인 스테이징을 패키징하도록 변경
+- 로컬 PowerShell 빌드와 GitHub Actions가 동일한 오프라인 스테이징 절차 사용
+- CI에서 배포 `index.html`의 jsDelivr/CDNJS/unpkg/Google Fonts 참조가 0건인지 검사
+- CI에서 패키지 내부 `chart.umd.js`, `xlsx.full.min.js`, `versions.json` 존재 검사
+- 생성 EXE `--self-test` 및 SQLite 생성 검증 PASS
+- GitHub Actions run `37210063848` 전체 PASS
+- 아티팩트 `학습클리닉_V13_Windows_Portable_Offline` 생성 성공
 
 ## HWPX 템플릿
 `backend/templates/` 아래에 실제 기관 원본 서식을 둔다.
@@ -160,6 +177,11 @@ V12의 현재 구조를 처음부터 완전 정규화하면 호환성 손실 위
 └─ _internal/
    ├─ index.html
    ├─ assets/
+   │  └─ vendor/
+   │     ├─ chart.umd.js
+   │     ├─ xlsx.full.min.js
+   │     ├─ versions.json
+   │     └─ THIRD_PARTY_NOTICES.txt
    ├─ icons/
    └─ Python 및 프로그램 런타임
 ```
@@ -167,7 +189,7 @@ V12의 현재 구조를 처음부터 완전 정규화하면 호환성 손실 위
 업데이트 시에는 새 프로그램 폴더를 배포하되 기존 `data/`를 반드시 보존한다. 운영 PC에서는 네트워크 공유폴더에서 직접 실행하는 것보다 로컬 폴더에 복사해 실행하는 방식을 권장한다.
 
 ## 현재 제한 및 다음 단계
-1. 실제 지급명세서/집행내역/관리부 HWPX 원본 연결 및 표 행 반복 매퍼 구현
-2. 실제 운영 데이터로 최종 UAT 및 백업·복구 시나리오 검증
-3. 현재 `index.html`의 일부 외부 CDN 자산(Chart.js, SheetJS, 웹폰트)을 로컬 자산으로 전환하거나 Python 기능으로 대체해 완전 오프라인 배포 보강
-4. one-folder 안정화 후 필요 시 one-file 배포를 별도 검토
+1. 실제 운영 데이터로 최종 UAT 및 백업·복구 시나리오 검증
+2. 실제 지급명세서/집행내역/관리부 HWPX 원본 연결 및 표 행 반복 매퍼 구현
+3. one-folder 실사용 안정화 후 필요 시 one-file 배포를 별도 검토
+4. GitHub/PWA 버전은 원본 호환성 유지를 위해 기존 CDN 구조를 유지하며, 완전 오프라인 보장은 Windows 포터블 배포물을 기준으로 한다.
