@@ -22,6 +22,16 @@ def _rates(state: dict[str, Any]) -> dict[str, float]:
 
 def _budget(state: dict[str, Any]) -> dict[str, float]:
     raw = (state.get("cfg") or {}).get("budget") or {}
+    # V12/초기 데이터 중에는 전체예산을 숫자 하나로 저장한 경우가 있을 수 있다.
+    # 그 값은 총예산으로 안전하게 승격하고 세부 항목은 0으로 둔다.
+    if isinstance(raw, (int, float, str)):
+        try:
+            total = float(raw or 0)
+        except (TypeError, ValueError):
+            total = 0.0
+        return {"total": total, "coach": 0.0, "cls": 0.0, "travel": 0.0}
+    if not isinstance(raw, dict):
+        raw = {}
     return {
         "total": float(raw.get("total") or 0),
         "coach": float(raw.get("coach") or 0),
