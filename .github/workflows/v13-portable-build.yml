@@ -88,6 +88,7 @@ jobs:
           인터넷 연결 없이 핵심 UI/차트/행정보고형 엑셀/HWPX 기능 사용 가능
           Chart.js / SheetJS / ExcelJS는 프로그램 내부 로컬 자산 사용
           data 폴더는 실제 업무데이터이므로 업데이트 시 보존하세요.
+          오류 발생 시 data 폴더의 *-error.log 파일을 함께 확인하세요.
           '@ | Set-Content -Path 'dist/학습클리닉_V13/사용안내.txt' -Encoding UTF8
 
       - name: Verify package structure and offline assets
@@ -121,11 +122,25 @@ jobs:
         shell: pwsh
         run: |
           $p = Start-Process -FilePath 'dist/학습클리닉_V13/학습클리닉_V13.exe' -ArgumentList '--self-test' -Wait -PassThru
-          if ($p.ExitCode -ne 0) { throw "Packaged EXE self-test failed: exit $($p.ExitCode)" }
+          if ($p.ExitCode -ne 0) {
+            Write-Host '=== packaged self-test diagnostics ==='
+            Get-ChildItem -Path 'dist/학습클리닉_V13/data' -Filter '*-error.log' -ErrorAction SilentlyContinue | ForEach-Object {
+              Write-Host "--- $($_.Name) ---"
+              Get-Content -Raw -Encoding UTF8 $_.FullName
+            }
+            throw "Packaged EXE self-test failed: exit $($p.ExitCode)"
+          }
           if (!(Test-Path 'dist/학습클리닉_V13/data/clinic_v13.db')) { throw 'portable SQLite database was not created' }
 
           $r = Start-Process -FilePath 'dist/학습클리닉_V13/학습클리닉_V13.exe' -ArgumentList '--runtime-self-test' -Wait -PassThru
-          if ($r.ExitCode -ne 0) { throw "Packaged GUI runtime self-test failed: exit $($r.ExitCode)" }
+          if ($r.ExitCode -ne 0) {
+            Write-Host '=== packaged GUI runtime diagnostics ==='
+            Get-ChildItem -Path 'dist/학습클리닉_V13/data' -Filter '*-error.log' -ErrorAction SilentlyContinue | ForEach-Object {
+              Write-Host "--- $($_.Name) ---"
+              Get-Content -Raw -Encoding UTF8 $_.FullName
+            }
+            throw "Packaged GUI runtime self-test failed: exit $($r.ExitCode)"
+          }
 
       - name: Upload portable package
         uses: actions/upload-artifact@v4
