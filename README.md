@@ -1,14 +1,23 @@
-# 학습클리닉 통합관리 V12
+# 학습클리닉 통합관리 V13 하이브리드
 
-V11.6 기반의 1차 리팩터링 구조 정리판입니다.
+충청북도학습클리닉용 업무지원프로그램입니다.
 
-## 이번 단계
-- 13개 JS 로드 체인을 `assets/js/app.js` 1개 번들로 통합
-- `saveAll()`을 전체 clear/bulk write 방식에서 차등 동기화 방식으로 완화
-- `buildIndex()`에 dirty flag + signature 캐시 추가
-- `renderPivots()` 시작 시 `buildIndex()` 강제 호출
-- 배포는 `assets/js/app.js`만 사용, 이전 파일은 `legacy-js/`로 이동
+## V13 하이브리드 업그레이드
 
-## 아직 남아 있는 것
-- 내부 로직 자체는 V11 계열을 많이 계승하므로 전역 상태와 후반 패치 스타일의 흔적이 일부 남아 있음
-- 완전한 상태관리 스토어/이벤트 기반 렌더링은 V12.1 이상 단계 권장
+`v13-hybrid-migration` 브랜치에서는 기존 V12 UI/PWA 흐름을 유지하면서 Python 업무 엔진, SQLite 저장소, HWPX/Excel 출력, pywebview Windows 포터블 실행 구조를 단계적으로 도입하고 있습니다.
+
+현재 Windows 포터블 배포물은 다음을 포함합니다.
+
+- Python/FastAPI 업무 엔진 내장
+- SQLite 업무데이터 저장 및 브라우저 저장소와 안전 대조
+- 통계·검증·정산 Python 계산원본
+- PyInstaller one-folder 실행 파일
+- 고정 포트 없는 pywebview 데스크톱 실행
+- Chart.js 4.4.0 / SheetJS 0.18.5 로컬 포함
+- 외부 웹폰트 제거 및 Windows 시스템 글꼴 사용
+- 인터넷 연결 없이 핵심 UI·차트·Excel 기능 사용 가능
+- 생성 EXE self-test 및 Windows CI 자동검증
+
+배포 파일은 GitHub Actions의 `V13 Portable Build` 워크플로에서 `학습클리닉_V13_Windows_Portable_Offline` 아티팩트로 생성됩니다.
+
+자세한 전환 구조와 검증 기준은 [`V13_HYBRID_MIGRATION.md`](V13_HYBRID_MIGRATION.md)를 참고하세요.

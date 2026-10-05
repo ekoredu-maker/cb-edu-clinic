@@ -1,0 +1,89 @@
+name: V13 Regression
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [v13-hybrid-migration]
+
+jobs:
+  backend-tests:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+          cache-dependency-path: |
+            backend/requirements.txt
+            backend/requirements-dev.txt
+
+      - name: Install dependencies
+        shell: pwsh
+        run: python -m pip install -r requirements-dev.txt
+
+      - name: Run regression suite
+        shell: pwsh
+        run: python -m pytest -q
+
+      - name: Run operational UAT
+        shell: pwsh
+        run: python uat_runner.py --output-dir ../.build/uat
+
+      - name: Run Stage18 HTML-HWPX print-contract parity diagnostics
+        shell: pwsh
+        run: python html_hwpx_parity_stage18.py --output-dir ../.build/stage18-parity
+
+      - name: Generate synthetic HWPX Hancom UAT set
+        shell: pwsh
+        run: python hwpx_uat_pack.py --output-dir ../.build/hwpx-uat
+
+      - name: Check hybrid JavaScript syntax
+        shell: pwsh
+        working-directory: .
+        run: |
+          node --check assets/js/bootstrap.js
+          node --check assets/js/hybrid/python-bridge.js
+          node --check assets/js/hybrid/regression.js
+          node --check assets/js/hybrid/engine-source.js
+          node --check assets/js/hybrid/authoritative-engine.js
+          node --check assets/js/hybrid/dual-write.js
+          node --check assets/js/hybrid/storage-migration.js
+          node --check assets/js/hybrid/read-source.js
+          node --check assets/js/hybrid/document-export.js
+
+      - name: Upload UAT report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: V13_Operational_UAT_Report
+          path: |
+            .build/uat/uat_report.json
+            .build/uat/uat_report.md
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Upload Stage18 parity report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: V13_HTML_HWPX_Print_Parity_Report
+          path: .build/stage18-parity
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload HWPX Hancom UAT sample set
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: V13_HWPX_Hancom_UAT_Samples
+          path: .build/hwpx-uat
+          if-no-files-found: error
+          retention-days: 14
