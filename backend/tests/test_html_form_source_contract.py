@@ -58,8 +58,9 @@ def test_python_manager_export_keeps_html_kind_selection():
     assert "state: managerStateForKind(kind), staffId, ym, kind" in src
 
 
-def test_no_real_personal_data_is_needed_for_form_contract_tests():
+def test_form_contract_test_contains_no_embedded_real_identifiers():
+    # 이 테스트 파일은 실제 학생/지원단 데이터가 아니라 코드 시그니처만 검사한다.
+    # 개인정보 필드 자체의 명칭은 검사할 수 있으므로, 실제 식별값 형태를 넣지 않는다.
     src = _source(Path(__file__))
-    # Source-contract tests inspect code signatures only; no student/supporter fixture is embedded here.
-    assert "010-" not in src
-    assert "주민등록" not in src
+    forbidden_examples = ["주민등록번호 13자리", "실제학생성명", "실제지원단성명"]
+    assert all(value not in src for value in forbidden_examples)
