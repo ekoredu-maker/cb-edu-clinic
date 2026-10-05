@@ -31,6 +31,25 @@ async function download(path, payload) {
   return filename;
 }
 
+function currentManagerKind() {
+  return document.getElementById('mgr-kind')?.value || 'coach';
+}
+
+function managerStateForKind(kind) {
+  const source = getState();
+  const state = (typeof structuredClone === 'function')
+    ? structuredClone(source)
+    : JSON.parse(JSON.stringify(source));
+  state.mat = (state.mat || []).map(m => {
+    const copy = { ...m };
+    const matchingKind = copy.kind || 'coach';
+    copy.logs = (copy.logs || []).filter(log => (log.kind || matchingKind || 'coach') === kind);
+    if (matchingKind !== kind && copy.logs.length === 0) copy.st = '__v13_export_filtered__';
+    return copy;
+  });
+  return state;
+}
+
 export async function exportPaySlipHwpx() {
   if (!PythonBridge.isAvailable()) return notify('HWPX 출력은 Windows 하이브리드 버전에서 사용할 수 있습니다.', 'warning');
   const staffId = document.getElementById('pay-stf-sel')?.value || '';
@@ -60,9 +79,10 @@ export async function exportManagerBookHwpx() {
   if (!PythonBridge.isAvailable()) return notify('HWPX 출력은 Windows 하이브리드 버전에서 사용할 수 있습니다.', 'warning');
   const staffId = document.getElementById('mgr-stf-sel')?.value || '';
   const ym = document.getElementById('mgr-ym')?.value || '';
+  const kind = currentManagerKind();
   if (!staffId || !ym) return notify('지원단과 대상 월을 선택하세요.', 'warning');
   try {
-    const filename = await download('/api/export/manager_book.hwpx', { state: getState(), staffId, ym });
+    const filename = await download('/api/export/manager_book.hwpx', { state: managerStateForKind(kind), staffId, ym, kind });
     notify(`관리부 HWPX 생성 완료: ${filename}`, 'success');
   } catch (e) {
     notify(e.message || '관리부 HWPX 생성에 실패했습니다.', 'warning');
@@ -174,9 +194,10 @@ export function installDocumentExports() {
   window.exportMgrBookXlsx = async function() {
     const staffId = document.getElementById('mgr-stf-sel')?.value || '';
     const ym = document.getElementById('mgr-ym')?.value || '';
+    const kind = currentManagerKind();
     if (!staffId || !ym) return oldMgrXlsx?.();
     try {
-      const filename = await download('/api/export/manager-book.xlsx', { state: getState(), staffId, ym });
+      const filename = await download('/api/export/manager-book.xlsx', { state: managerStateForKind(kind), staffId, ym, kind });
       notify(`Python 관리부 Excel 생성 완료: ${filename}`, 'success');
     } catch (e) {
       console.warn('[V13] Python manager-book Excel fallback:', e);
