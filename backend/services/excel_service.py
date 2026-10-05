@@ -7,7 +7,11 @@ from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font
 from openpyxl.utils import get_column_letter
 
-from services.document_model import execution_report_model, manager_book_model, pay_slip_model
+from services.document_routing import (
+    execution_report_export_model as execution_report_model,
+    manager_book_export_model as manager_book_model,
+    pay_slip_export_model as pay_slip_model,
+)
 
 
 def _set_widths(ws, widths: list[int | float]) -> None:
