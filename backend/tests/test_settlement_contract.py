@@ -43,3 +43,15 @@ def test_settlement_matches_v12_rules():
     assert s1["net"] == 90000 - s1["tax"]
     assert result["executed"]["total"] == 90000
     assert result["remaining"]["total"] == 410000
+
+
+def test_legacy_numeric_budget_is_treated_as_total_budget():
+    state = {
+        "cfg": {"budget": 500000},
+        "stu": [],
+        "mat": [],
+        "trn": [],
+    }
+    result = build_settlement({"state": state, "ym": "2026-10"})
+    assert result["budget"] == {"total": 500000.0, "coach": 0.0, "cls": 0.0, "travel": 0.0}
+    assert result["remaining"]["total"] == 500000.0
