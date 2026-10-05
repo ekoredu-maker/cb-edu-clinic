@@ -1,4 +1,4 @@
-const CACHE_NAME = "jc-edu-clinic-v12.3.2-stat-print-fix";
+const CACHE_NAME = "jc-edu-clinic-v13.0.1-admin-report-hotfix";
 const ASSETS = [
   "./",
   "./index.html",
@@ -10,6 +10,15 @@ const ASSETS = [
   "./assets/js/data/persistence.js",
   "./assets/js/domain/statistics.js",
   "./assets/js/domain/verification.js",
+  "./assets/js/hybrid/python-bridge.js",
+  "./assets/js/hybrid/regression.js",
+  "./assets/js/hybrid/engine-source.js",
+  "./assets/js/hybrid/authoritative-engine.js",
+  "./assets/js/hybrid/dual-write.js",
+  "./assets/js/hybrid/storage-migration.js",
+  "./assets/js/hybrid/read-source.js",
+  "./assets/js/hybrid/document-export.js",
+  "./assets/js/hybrid/statistics-report-export.js",
   "./icons/favicon.png",
   "./icons/icon-192.png",
   "./icons/icon-512.png",
