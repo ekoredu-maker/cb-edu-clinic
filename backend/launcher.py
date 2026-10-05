@@ -16,6 +16,9 @@ import uvicorn
 from app import app
 from runtime_paths import user_data_dir
 
+_API_SERVER: uvicorn.Server | None = None
+_API_THREAD: threading.Thread | None = None
+
 
 def find_free_port() -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
@@ -24,7 +27,11 @@ def find_free_port() -> int:
 
 
 def run_api(port: int) -> None:
-    uvicorn.run(app, host="127.0.0.1", port=port, log_level="warning", access_log=False)
+    global _API_SERVER
+    config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning", access_log=False)
+    server = uvicorn.Server(config)
+    _API_SERVER = server
+    server.run()
 
 
 def wait_until_ready(base_url: str, timeout: float = 12.0) -> None:
@@ -42,11 +49,25 @@ def wait_until_ready(base_url: str, timeout: float = 12.0) -> None:
 
 
 def start_engine() -> str:
+    global _API_THREAD
     port = find_free_port()
-    threading.Thread(target=run_api, args=(port,), daemon=True, name="clinic-api").start()
+    _API_THREAD = threading.Thread(target=run_api, args=(port,), daemon=True, name="clinic-api")
+    _API_THREAD.start()
     base_url = f"http://127.0.0.1:{port}"
     wait_until_ready(base_url)
     return base_url
+
+
+def stop_engine(timeout: float = 5.0) -> None:
+    global _API_SERVER, _API_THREAD
+    server = _API_SERVER
+    thread = _API_THREAD
+    if server is not None:
+        server.should_exit = True
+    if thread is not None and thread.is_alive():
+        thread.join(timeout=timeout)
+    _API_SERVER = None
+    _API_THREAD = None
 
 
 def _candidate_browser_paths() -> list[Path]:
@@ -124,33 +145,35 @@ def launch_app_window(base_url: str) -> int:
 
 def self_test() -> int:
     base_url = start_engine()
-    with urlopen(f"{base_url}/api/health", timeout=3.0) as response:
-        health = json.loads(response.read().decode("utf-8"))
-        if response.status != 200 or not health.get("ok"):
-            raise RuntimeError("health check failed")
+    try:
+        with urlopen(f"{base_url}/api/health", timeout=3.0) as response:
+            health = json.loads(response.read().decode("utf-8"))
+            if response.status != 200 or not health.get("ok"):
+                raise RuntimeError("health check failed")
 
-    with urlopen(f"{base_url}/", timeout=3.0) as response:
-        html = response.read(8192).decode("utf-8", errors="ignore")
-        if response.status != 200 or "학습클리닉" not in html:
-            raise RuntimeError("packaged frontend check failed")
+        with urlopen(f"{base_url}/", timeout=3.0) as response:
+            html = response.read(8192).decode("utf-8", errors="ignore")
+            if response.status != 200 or "학습클리닉" not in html:
+                raise RuntimeError("packaged frontend check failed")
 
-    if getattr(sys, "frozen", False):
-        offline = health.get("offline") or {}
-        if not offline.get("ready"):
-            raise RuntimeError(f"offline bundle check failed: {offline}")
-        for asset in (
-            "/assets/vendor/chart.umd.js",
-            "/assets/vendor/xlsx.full.min.js",
-            "/assets/vendor/versions.json",
-        ):
-            with urlopen(f"{base_url}{asset}", timeout=3.0) as response:
-                body = response.read()
-                if response.status != 200 or len(body) < 10:
-                    raise RuntimeError(f"offline asset serving failed: {asset}")
-        if "assets/vendor/chart.umd.js" not in html or "assets/vendor/xlsx.full.min.js" not in html:
-            raise RuntimeError("packaged index is not using local vendor assets")
-
-    return 0
+        if getattr(sys, "frozen", False):
+            offline = health.get("offline") or {}
+            if not offline.get("ready"):
+                raise RuntimeError(f"offline bundle check failed: {offline}")
+            for asset in (
+                "/assets/vendor/chart.umd.js",
+                "/assets/vendor/xlsx.full.min.js",
+                "/assets/vendor/versions.json",
+            ):
+                with urlopen(f"{base_url}{asset}", timeout=3.0) as response:
+                    body = response.read()
+                    if response.status != 200 or len(body) < 10:
+                        raise RuntimeError(f"offline asset serving failed: {asset}")
+            if "assets/vendor/chart.umd.js" not in html or "assets/vendor/xlsx.full.min.js" not in html:
+                raise RuntimeError("packaged index is not using local vendor assets")
+        return 0
+    finally:
+        stop_engine()
 
 
 def runtime_self_test() -> int:
@@ -169,7 +192,12 @@ def main() -> None:
         raise SystemExit(runtime_self_test())
 
     base_url = start_engine()
-    raise SystemExit(launch_app_window(base_url))
+    exit_code = 0
+    try:
+        exit_code = launch_app_window(base_url)
+    finally:
+        stop_engine()
+    raise SystemExit(exit_code)
 
 
 if __name__ == "__main__":
