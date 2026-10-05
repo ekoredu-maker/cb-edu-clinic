@@ -103,7 +103,8 @@ def _tables(path):
 def test_html_masking_parity_for_manager_and_timetable():
     state = _state("partial")
     manager = manager_book_model(state, "sf001", "2026-10")
-    assert "홍OO(의림초)" in dict(manager["meta"])["담당학생"]
+    assert dict(manager["meta"])["구분"] == "학습코칭"
+    assert manager["columns"][5] == manager["columns"][11] == "학생"
     assert any("홍OO" in row for row in manager["rows"])
     assert manager["totals"]["count"] == 1
 
