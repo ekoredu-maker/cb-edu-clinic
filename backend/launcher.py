@@ -53,14 +53,17 @@ def wait_until_ready(base_url: str, timeout: float = 20.0) -> None:
 
 
 def _server(port: int) -> uvicorn.Server:
-    # Keep the ASGI server on the main thread.  Besides being the most stable
-    # Uvicorn execution path, this avoids background-thread signal/lifecycle
-    # differences across Uvicorn/Python/PyInstaller versions.
+    # Keep the ASGI server on the main thread. Windowed PyInstaller executables
+    # have sys.stdout/sys.stderr set to None; Uvicorn's default colour logging
+    # probes stderr.isatty() and therefore crashes before the server starts.
+    # Disable Uvicorn's console log configuration and rely on our file-based
+    # startup diagnostics instead.
     config = uvicorn.Config(
         app,
         host="127.0.0.1",
         port=port,
         log_level="warning",
+        log_config=None,
         access_log=False,
         loop="asyncio",
         http="h11",
