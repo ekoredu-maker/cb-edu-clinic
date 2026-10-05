@@ -25,7 +25,7 @@ def _inspect(path):
     return tables, text
 
 
-def test_native_hwpx_from_html_contract_models(tmp_path):
+def test_native_hwpx_from_html_print_contract_models(tmp_path):
     state = build_large_state(ym="2026-10")
     settlement = build_settlement({"state": state, "ym": "2026-10"})
     staff_by_id = {str(x["id"]): x for x in state["stf"]}
@@ -35,7 +35,7 @@ def test_native_hwpx_from_html_contract_models(tmp_path):
     pay_path = create_native_hwpx(tmp_path / "pay.hwpx", pay_model)
     pay_tables, pay_text = _inspect(pay_path)
     assert len(pay_tables) == 2
-    assert pay_tables[0].attrib["colCnt"] == "8"
+    assert pay_tables[0].attrib["colCnt"] == "6"
     assert "활동비 지급 명세서 (2026-10)" in pay_text
     assert "★ 실지급액" in pay_text
 
@@ -43,7 +43,7 @@ def test_native_hwpx_from_html_contract_models(tmp_path):
     execution_path = create_native_hwpx(tmp_path / "execution.hwpx", execution_model)
     execution_tables, execution_text = _inspect(execution_path)
     assert len(execution_tables) == 1
-    assert execution_tables[0].attrib["colCnt"] == "10"
+    assert execution_tables[0].attrib["colCnt"] == "9"
     assert execution_tables[0].attrib["rowCnt"] == str(1 + len(execution_model["rows"]) + 1)
     assert "월별 활동비 집행내역서 (2026-10)" in execution_text
     assert "합계" in execution_text
@@ -52,14 +52,16 @@ def test_native_hwpx_from_html_contract_models(tmp_path):
     manager_path = create_native_hwpx(tmp_path / "manager.hwpx", manager_model)
     manager_tables, manager_text = _inspect(manager_path)
     assert len(manager_tables) == 1
-    assert manager_tables[0].attrib["colCnt"] == "13"
+    assert manager_tables[0].attrib["colCnt"] == "12"
     assert manager_tables[0].attrib["rowCnt"] == "17"
-    assert "학습지원단 관리부 (2026년 10월)" in manager_text
-    assert "총 실시 회기: 120회" in manager_text
+    assert "학습지원단 관리부 — 학습코칭 (2026년 10월)" in manager_text
+    assert "총 실시 회기: 96회" in manager_text
 
 
-def test_manager_model_uses_only_verified_paid_logs():
+def test_manager_print_model_uses_only_verified_paid_coach_logs():
     state = build_large_state(ym="2026-10")
     model = manager_book_model(state, "sf001", "2026-10")
-    assert model["totals"]["count"] == 120
+    assert model["totals"]["count"] == 96
     assert model["contract"]["verifiedStatuses"] == ["verified", "paid"]
+    assert dict(model["meta"])["구분"] == "학습코칭"
+    assert model["columns"][5] == model["columns"][11] == "학생"
