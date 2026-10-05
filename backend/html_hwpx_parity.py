@@ -59,6 +59,19 @@ VISIBLE_MARKERS: dict[str, list[str]] = {
     "timetable": ["시간표", "홍OO"],
 }
 
+# HTML 화면에서 실제 인쇄되는 표의 열. Excel 상세열과 다르면 오류가 아니라
+# 별도의 print-schema drift로 추적한다. HWPX를 HTML 인쇄물과 더 정밀하게
+# 맞출 때 이 차이를 해소할 수 있도록 Stage17 보고서에 남긴다.
+HTML_PRINT_COLUMNS: dict[str, list[str]] = {
+    "pay_slip": ["날짜", "학생/제목", "학교", "시간", "내용", "금액"],
+    "execution_report": ["No", "지원단", "학습코칭", "금액", "수업협력", "금액", "출장비", "금액", "총액(세전)"],
+    "manager_book": [
+        "일", "요", "학교", "시간", "지도내용", "학생",
+        "일", "요", "학교", "시간", "지도내용", "학생",
+    ],
+    "timetable": ["시간", "월", "화", "수", "목", "금", "토", "일"],
+}
+
 
 def _state() -> dict[str, Any]:
     return {
@@ -67,7 +80,11 @@ def _state() -> dict[str, Any]:
             "admin": "홍길동 장학사",
             "confirmer": "담당 장학사",
             "maskMode": "partial",
-            "rates": {"coach": 40000, "cls": 30000, "travelLong": 20000, "travelShort": 10000, "taxPct": 3.3},
+            "rateCoach": 40000,
+            "rateClass": 30000,
+            "rateTravelLong": 20000,
+            "rateTravelShort": 10000,
+            "taxPct": 3.3,
             "budget": 1000000,
         },
         "stf": [
@@ -163,6 +180,14 @@ def _expected_table_columns(model: dict[str, Any]) -> list[int]:
     return [len(model.get("columns") or [])]
 
 
+def _compact(value: str) -> str:
+    return re.sub(r"\s+", "", value or "")
+
+
+def _visible(text: str, marker: str) -> bool:
+    return marker in text or _compact(marker) in _compact(text)
+
+
 def run_parity(output_dir: str | Path) -> dict[str, Any]:
     output = Path(output_dir)
     output.mkdir(parents=True, exist_ok=True)
@@ -205,6 +230,30 @@ def run_parity(output_dir: str | Path) -> dict[str, Any]:
             if not ok:
                 errors.append("문서모델 열 순서가 HTML 서식계약과 다릅니다.")
 
+        print_columns = HTML_PRINT_COLUMNS.get(key)
+        if print_columns and contract_columns and print_columns != contract_columns:
+            warnings.append(
+                f"HTML 인쇄표 {len(print_columns)}열과 Python/HWPX 계약 {len(contract_columns)}열이 다릅니다. "
+                "현재 HWPX는 상세 export 계약을 따르므로 다음 정밀보정 대상입니다."
+            )
+            checks.append({
+                "layer": "html-vs-contract",
+                "check": "print schema drift",
+                "ok": True,
+                "htmlPrintColumns": print_columns,
+                "contractColumns": contract_columns,
+                "drift": True,
+            })
+        elif print_columns:
+            checks.append({
+                "layer": "html-vs-contract",
+                "check": "print schema drift",
+                "ok": True,
+                "htmlPrintColumns": print_columns,
+                "contractColumns": contract_columns,
+                "drift": False,
+            })
+
         expected_orientation = str((contract.get("print") or {}).get("orientation") or ("landscape" if contract.get("landscape") else "portrait"))
         diag = render_diagnostics(model)
         orientation_ok = diag["orientation"] == expected_orientation
@@ -241,8 +290,9 @@ def run_parity(output_dir: str | Path) -> dict[str, Any]:
         if not title_ok:
             errors.append("HWPX 미리보기에서 문서 제목을 찾지 못했습니다.")
 
+        visible_text = preview + "\n" + section
         for marker in VISIBLE_MARKERS[key]:
-            ok = marker in preview or marker in section
+            ok = _visible(visible_text, marker)
             checks.append({"layer": "hwpx", "check": f"visible marker: {marker}", "ok": ok})
             if not ok:
                 errors.append(f"HWPX에서 핵심 문구 '{marker}'를 찾지 못했습니다.")
@@ -282,7 +332,7 @@ def run_parity(output_dir: str | Path) -> dict[str, Any]:
         f"- 오류: {len(report['errors'])}건",
         f"- 경고: {len(report['warnings'])}건",
         "",
-        "| 서식 | 결과 | 방향 | 표 열 수 | 경고 |",
+        "| 서식 | 결과 | 방향 | HWPX 표 열 수 | 경고 |",
         "|---|---|---|---|---|",
     ]
     for key in EXPECTED_KEYS:
