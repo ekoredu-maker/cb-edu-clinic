@@ -13,9 +13,11 @@ NODE_ROOT = BUILD_ROOT / "offline_node"
 
 CHART_VERSION = "4.4.0"
 XLSX_VERSION = "0.18.5"
+EXCELJS_VERSION = "4.4.0"
 
 REMOTE_CHART = "https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"
 REMOTE_XLSX = "https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"
+REMOTE_EXCELJS = "https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js"
 REMOTE_FONT = "https://cdn.jsdelivr.net/gh/orioncactus/pretendard/dist/web/static/pretendard.css"
 
 
@@ -61,6 +63,7 @@ def _install_vendor_packages() -> None:
         "--no-fund",
         f"chart.js@{CHART_VERSION}",
         f"xlsx@{XLSX_VERSION}",
+        f"exceljs@{EXCELJS_VERSION}",
     ]
     subprocess.run(cmd, cwd=ROOT, check=True)
 
@@ -78,24 +81,29 @@ def _copy_vendor_assets() -> None:
 
     chart_pkg = _read_package_json("chart.js")
     xlsx_pkg = _read_package_json("xlsx")
+    exceljs_pkg = _read_package_json("exceljs")
     if chart_pkg.get("version") != CHART_VERSION:
         raise RuntimeError(f"Chart.js 버전 불일치: {chart_pkg.get('version')}")
     if xlsx_pkg.get("version") != XLSX_VERSION:
         raise RuntimeError(f"SheetJS 버전 불일치: {xlsx_pkg.get('version')}")
+    if exceljs_pkg.get("version") != EXCELJS_VERSION:
+        raise RuntimeError(f"ExcelJS 버전 불일치: {exceljs_pkg.get('version')}")
 
     chart_src = NODE_ROOT / "node_modules" / "chart.js" / "dist" / "chart.umd.js"
     xlsx_src = NODE_ROOT / "node_modules" / "xlsx" / "dist" / "xlsx.full.min.js"
-    if not chart_src.exists():
-        raise RuntimeError(f"Chart.js UMD 파일을 찾을 수 없습니다: {chart_src}")
-    if not xlsx_src.exists():
-        raise RuntimeError(f"SheetJS 파일을 찾을 수 없습니다: {xlsx_src}")
+    exceljs_src = NODE_ROOT / "node_modules" / "exceljs" / "dist" / "exceljs.min.js"
+    for label, src in (("Chart.js", chart_src), ("SheetJS", xlsx_src), ("ExcelJS", exceljs_src)):
+        if not src.exists():
+            raise RuntimeError(f"{label} 파일을 찾을 수 없습니다: {src}")
 
     shutil.copy2(chart_src, vendor / "chart.umd.js")
     shutil.copy2(xlsx_src, vendor / "xlsx.full.min.js")
+    shutil.copy2(exceljs_src, vendor / "exceljs.min.js")
 
     packages = [
         ("chart.js", chart_pkg, NODE_ROOT / "node_modules" / "chart.js"),
         ("xlsx", xlsx_pkg, NODE_ROOT / "node_modules" / "xlsx"),
+        ("exceljs", exceljs_pkg, NODE_ROOT / "node_modules" / "exceljs"),
     ]
     notices = ["Third-party libraries bundled for offline use", ""]
     versions = {}
@@ -151,6 +159,17 @@ def _rewrite_index() -> None:
     path.write_text(text, encoding="utf-8")
 
 
+def _rewrite_statistics_exporter() -> None:
+    path = STAGE / "assets" / "js" / "hybrid" / "statistics-report-export.js"
+    if not path.exists():
+        raise RuntimeError(f"통계 보고서 exporter를 찾을 수 없습니다: {path}")
+    text = path.read_text(encoding="utf-8")
+    if REMOTE_EXCELJS not in text:
+        raise RuntimeError("통계 보고서 exporter의 ExcelJS 원격 참조를 찾지 못했습니다.")
+    text = text.replace(REMOTE_EXCELJS, "assets/vendor/exceljs.min.js")
+    path.write_text(text, encoding="utf-8")
+
+
 def _generate_offline_service_worker() -> None:
     assets: list[str] = ["./"]
     for path in sorted(STAGE.rglob("*")):
@@ -160,7 +179,7 @@ def _generate_offline_service_worker() -> None:
         assets.append(f"./{rel}")
 
     quoted = ",\n  ".join(json.dumps(item, ensure_ascii=False) for item in assets)
-    sw = f'''const CACHE_NAME = "jc-edu-clinic-v13-offline-1";
+    sw = f'''const CACHE_NAME = "jc-edu-clinic-v13-offline-2";
 const ASSETS = [
   {quoted}
 ];
@@ -233,6 +252,7 @@ def _assert_offline() -> None:
     for required in (
         STAGE / "assets" / "vendor" / "chart.umd.js",
         STAGE / "assets" / "vendor" / "xlsx.full.min.js",
+        STAGE / "assets" / "vendor" / "exceljs.min.js",
         STAGE / "assets" / "vendor" / "versions.json",
     ):
         if not required.exists() or required.stat().st_size == 0:
@@ -244,12 +264,14 @@ def main() -> int:
     _install_vendor_packages()
     _copy_vendor_assets()
     _rewrite_index()
+    _rewrite_statistics_exporter()
     _generate_offline_service_worker()
     _assert_offline()
 
     print(f"OFFLINE_FRONTEND={STAGE}")
     print(f"Chart.js={CHART_VERSION}")
     print(f"SheetJS={XLSX_VERSION}")
+    print(f"ExcelJS={EXCELJS_VERSION}")
     print("External runtime resources=0")
     return 0
 
