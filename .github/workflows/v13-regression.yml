@@ -37,6 +37,10 @@ jobs:
         shell: pwsh
         run: python uat_runner.py --output-dir ../.build/uat
 
+      - name: Run Stage17 HTML-HWPX parity diagnostics
+        shell: pwsh
+        run: python html_hwpx_parity.py --output-dir ../.build/stage17-parity
+
       - name: Generate synthetic HWPX Hancom UAT set
         shell: pwsh
         run: python hwpx_uat_pack.py --output-dir ../.build/hwpx-uat
@@ -64,6 +68,15 @@ jobs:
             .build/uat/uat_report.json
             .build/uat/uat_report.md
           if-no-files-found: warn
+          retention-days: 14
+
+      - name: Upload Stage17 parity report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: V13_HTML_HWPX_Parity_Report
+          path: .build/stage17-parity
+          if-no-files-found: error
           retention-days: 14
 
       - name: Upload HWPX Hancom UAT sample set
