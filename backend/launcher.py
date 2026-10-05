@@ -154,10 +154,11 @@ def self_test() -> int:
 
 
 def runtime_self_test() -> int:
+    # Windowed PyInstaller builds can have sys.stdout/sys.stderr == None, so
+    # this path must not print. A zero exit code is the runtime contract.
     browser = find_app_browser()
     if not browser.is_file():
         raise RuntimeError(f"app browser missing: {browser}")
-    print(json.dumps({"ok": True, "browser": str(browser)}, ensure_ascii=False))
     return 0
 
 
