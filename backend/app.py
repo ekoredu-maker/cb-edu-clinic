@@ -27,20 +27,22 @@ from services.document_context import execution_context, settlement_context
 from services.document_model import (
     appointment_confirmation_model,
     career_confirmation_model,
-    execution_report_model,
     learning_plan_model,
-    manager_book_model,
-    pay_slip_model,
     resignation_model,
     staff_appointment_model,
     timetable_model,
+)
+from services.print_document_model import (
+    execution_report_print_model,
+    manager_book_print_model,
+    pay_slip_print_model,
 )
 from services.excel_service import create_execution_xlsx, create_manager_book_xlsx, create_pay_slip_xlsx
 from services.format_contract import list_format_contracts
 from services.hwpx_native_service import NativeHwpxError, create_native_hwpx
 from services.hwpx_service import HwpxTemplateError, create_from_template
 
-app = FastAPI(title="CB Edu Clinic V13 Hybrid Engine", version="13.0.0-alpha15")
+app = FastAPI(title="CB Edu Clinic V13 Hybrid Engine", version="13.0.0-alpha18")
 
 app.add_middleware(
     CORSMiddleware,
@@ -109,12 +111,13 @@ def health() -> dict:
     return {
         "ok": True,
         "engine": "python",
-        "version": "13.0.0-alpha15",
+        "version": "13.0.0-alpha18",
         "templates": template_status,
         "formatContracts": {key: True for key in format_contracts},
         "nativeHwpx": {
             "available": sorted(NATIVE_HWPX_KEYS),
             "hancomValidated": False,
+            "monthlyContract": "html-print",
         },
         "offline": {"ready": all(offline_status.values()), "assets": offline_status},
         "storage": storage_status(),
@@ -268,19 +271,24 @@ def _native_model(template_key: str, state: dict, payload: dict, settlement_resu
         if not staff:
             raise HTTPException(status_code=404, detail="지원단 정보를 찾을 수 없습니다.")
         result = settlement_result or build_settlement({"state": state, "ym": ym})
-        return pay_slip_model(result, staff, staff_id, ym, cfg.get("org") or ""), f"지급명세서_{_safe_name(staff.get('nm',''))}_{ym}.hwpx"
+        return pay_slip_print_model(
+            result, staff, staff_id, ym, cfg.get("org") or "", cfg.get("confirmer") or ""
+        ), f"지급명세서_{_safe_name(staff.get('nm',''))}_{ym}.hwpx"
     if template_key == "execution_report":
         result = settlement_result or build_settlement({"state": state, "ym": ym})
-        return execution_report_model(result, staff_map, ym, cfg.get("org") or ""), f"월별집행내역_{ym}.hwpx"
+        return execution_report_print_model(
+            result, staff_map, ym, cfg.get("org") or "", cfg.get("confirmer") or ""
+        ), f"월별집행내역_{ym}.hwpx"
     if template_key == "manager_book":
         staff = staff_map.get(staff_id)
         if not staff:
             raise HTTPException(status_code=404, detail="지원단 정보를 찾을 수 없습니다.")
+        kind = "class" if str(payload.get("kind") or cfg.get("__v13ManagerKind") or "") == "class" else "coach"
         try:
-            model = manager_book_model(state, staff_id, ym)
+            model = manager_book_print_model(state, staff_id, ym, kind=kind)
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
-        return model, f"관리부_{_safe_name(staff.get('nm',''))}_{ym}.hwpx"
+        return model, f"관리부_{_safe_name(staff.get('nm',''))}_{ym}_{'수업협력' if kind == 'class' else '학습코칭'}.hwpx"
 
     try:
         if template_key == "staff_appoint":
