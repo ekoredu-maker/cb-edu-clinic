@@ -185,11 +185,25 @@ def runtime_self_test() -> int:
     return 0
 
 
+def _finish_cli_test(fn) -> None:
+    code = 0
+    try:
+        code = int(fn() or 0)
+    except Exception:
+        code = 1
+    # Some frozen Windows runtimes keep helper threads alive during Python
+    # interpreter shutdown. The diagnostic contract is the exit code, so use a
+    # hard process exit after the checks have completed.
+    if getattr(sys, "frozen", False):
+        os._exit(code)
+    raise SystemExit(code)
+
+
 def main() -> None:
     if "--self-test" in sys.argv:
-        raise SystemExit(self_test())
+        _finish_cli_test(self_test)
     if "--runtime-self-test" in sys.argv:
-        raise SystemExit(runtime_self_test())
+        _finish_cli_test(runtime_self_test)
 
     base_url = start_engine()
     exit_code = 0
