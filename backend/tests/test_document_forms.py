@@ -5,11 +5,11 @@ from services.document_model import (
     appointment_confirmation_model,
     career_confirmation_model,
     learning_plan_model,
-    manager_book_model,
     resignation_model,
     staff_appointment_model,
     timetable_model,
 )
+from services.print_document_model import manager_book_print_model as manager_book_model
 from services.hwpx_native_service import create_native_hwpx, validate_native_hwpx
 
 
