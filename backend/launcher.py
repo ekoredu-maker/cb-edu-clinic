@@ -24,8 +24,6 @@ def find_free_port() -> int:
 
 
 def run_api(port: int) -> None:
-    # Keep the same proven startup path used by the Stage21 package. The API
-    # runs on a daemon thread; the process owns its lifetime.
     uvicorn.run(app, host="127.0.0.1", port=port, log_level="warning", access_log=False)
 
 
@@ -53,31 +51,20 @@ def start_engine() -> str:
 
 def _candidate_browser_paths() -> list[Path]:
     candidates: list[Path] = []
-
     explicit = os.getenv("CB_CLINIC_BROWSER", "").strip()
     if explicit:
         candidates.append(Path(explicit))
-
     for command in ("msedge.exe", "msedge", "chrome.exe", "chrome"):
         found = shutil.which(command)
         if found:
             candidates.append(Path(found))
-
-    env_roots = [
-        os.getenv("PROGRAMFILES(X86)"),
-        os.getenv("PROGRAMFILES"),
-        os.getenv("LOCALAPPDATA"),
-    ]
-    suffixes = [
-        Path("Microsoft/Edge/Application/msedge.exe"),
-        Path("Google/Chrome/Application/chrome.exe"),
-    ]
+    env_roots = [os.getenv("PROGRAMFILES(X86)"), os.getenv("PROGRAMFILES"), os.getenv("LOCALAPPDATA")]
+    suffixes = [Path("Microsoft/Edge/Application/msedge.exe"), Path("Google/Chrome/Application/chrome.exe")]
     for root in env_roots:
         if not root:
             continue
         for suffix in suffixes:
             candidates.append(Path(root) / suffix)
-
     unique: list[Path] = []
     seen: set[str] = set()
     for candidate in candidates:
@@ -107,7 +94,6 @@ def launch_app_window(base_url: str) -> int:
     browser = find_app_browser()
     profile_dir = user_data_dir() / "browser-profile"
     profile_dir.mkdir(parents=True, exist_ok=True)
-
     args = [
         str(browser),
         f"--app={base_url}/",
@@ -117,9 +103,6 @@ def launch_app_window(base_url: str) -> int:
         "--window-size=1440,920",
         "--disable-session-crashed-bubble",
     ]
-
-    # A dedicated user-data-dir gives the app its own browser process so the
-    # Python/FastAPI engine can live exactly as long as the app window.
     process = subprocess.Popen(args, close_fds=True)
     return int(process.wait())
 
@@ -143,6 +126,7 @@ def self_test() -> int:
         for asset in (
             "/assets/vendor/chart.umd.js",
             "/assets/vendor/xlsx.full.min.js",
+            "/assets/vendor/exceljs.min.js",
             "/assets/vendor/versions.json",
         ):
             with urlopen(f"{base_url}{asset}", timeout=3.0) as response:
@@ -155,8 +139,6 @@ def self_test() -> int:
 
 
 def runtime_self_test() -> int:
-    # Windowed PyInstaller builds can have sys.stdout/sys.stderr == None, so
-    # this path must not print. A zero exit code is the runtime contract.
     browser = find_app_browser()
     if not browser.is_file():
         raise RuntimeError(f"app browser missing: {browser}")
@@ -169,9 +151,6 @@ def _finish_cli_test(fn) -> None:
         code = int(fn() or 0)
     except Exception:
         code = 1
-    # Frozen windowed applications can retain helper/runtime threads during
-    # interpreter shutdown. Diagnostics are complete at this point, so return
-    # the contract exit code directly to Windows.
     if getattr(sys, "frozen", False):
         os._exit(code)
     raise SystemExit(code)
@@ -182,7 +161,6 @@ def main() -> None:
         _finish_cli_test(self_test)
     if "--runtime-self-test" in sys.argv:
         _finish_cli_test(runtime_self_test)
-
     base_url = start_engine()
     raise SystemExit(launch_app_window(base_url))
 
