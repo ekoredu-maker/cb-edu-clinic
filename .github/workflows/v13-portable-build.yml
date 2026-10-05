@@ -57,6 +57,7 @@ jobs:
           node --check assets/js/hybrid/storage-migration.js
           node --check assets/js/hybrid/read-source.js
           node --check assets/js/hybrid/document-export.js
+          node --check assets/js/hybrid/statistics-report-export.js
 
       - name: Prepare complete offline frontend
         shell: pwsh
@@ -91,6 +92,7 @@ jobs:
           if (!(Test-Path 'dist/학습클리닉_V13/학습클리닉_V13.exe')) { throw 'EXE missing' }
           if (!(Test-Path 'dist/학습클리닉_V13/_internal/index.html')) { throw 'index.html missing' }
           if (!(Test-Path 'dist/학습클리닉_V13/_internal/assets/js/bootstrap.js')) { throw 'frontend assets missing' }
+          if (!(Test-Path 'dist/학습클리닉_V13/_internal/assets/js/hybrid/statistics-report-export.js')) { throw 'statistics report exporter missing' }
           if (!(Test-Path 'dist/학습클리닉_V13/_internal/assets/vendor/chart.umd.js')) { throw 'packaged Chart.js missing' }
           if (!(Test-Path 'dist/학습클리닉_V13/_internal/assets/vendor/xlsx.full.min.js')) { throw 'packaged SheetJS missing' }
           if (!(Test-Path 'dist/학습클리닉_V13/_internal/assets/vendor/versions.json')) { throw 'vendor version metadata missing' }
