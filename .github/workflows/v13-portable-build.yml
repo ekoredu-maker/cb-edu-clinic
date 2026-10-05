@@ -65,8 +65,12 @@ jobs:
           python packaging/prepare_offline_bundle.py
           if (!(Test-Path '.build/offline_frontend/assets/vendor/chart.umd.js')) { throw 'offline Chart.js missing' }
           if (!(Test-Path '.build/offline_frontend/assets/vendor/xlsx.full.min.js')) { throw 'offline SheetJS missing' }
+          if (!(Test-Path '.build/offline_frontend/assets/vendor/exceljs.min.js')) { throw 'offline ExcelJS missing' }
           $idx = Get-Content -Raw -Encoding UTF8 '.build/offline_frontend/index.html'
           if ($idx -match 'https?://(cdn\.jsdelivr\.net|cdnjs\.cloudflare\.com|unpkg\.com|fonts\.googleapis\.com|fonts\.gstatic\.com)') { throw 'external CDN reference remains in offline index' }
+          $report = Get-Content -Raw -Encoding UTF8 '.build/offline_frontend/assets/js/hybrid/statistics-report-export.js'
+          if ($report -match 'https?://') { throw 'external Excel report dependency remains in offline exporter' }
+          if ($report -notmatch 'assets/vendor/exceljs\.min\.js') { throw 'local ExcelJS reference missing in offline exporter' }
 
       - name: Build portable one-folder package
         shell: pwsh
@@ -76,13 +80,13 @@ jobs:
           New-Item -ItemType File -Force 'dist/학습클리닉_V13/portable.flag' | Out-Null
           New-Item -ItemType Directory -Force 'dist/학습클리닉_V13/data' | Out-Null
           @'
-          충북종합학습클리닉 업무관리 프로그램 V13
+          충북종합학습클리닉 업무관리 프로그램 V13.0.1
           실행: 학습클리닉_V13.exe
           Python 별도 설치 불필요
           Microsoft Edge(Windows 기본) 또는 Google Chrome 필요
           주소창/탭 없는 앱 창으로 실행됨
-          인터넷 연결 없이 핵심 UI/차트/엑셀/HWPX 기능 사용 가능
-          Chart.js / SheetJS는 프로그램 내부 로컬 자산 사용
+          인터넷 연결 없이 핵심 UI/차트/행정보고형 엑셀/HWPX 기능 사용 가능
+          Chart.js / SheetJS / ExcelJS는 프로그램 내부 로컬 자산 사용
           data 폴더는 실제 업무데이터이므로 업데이트 시 보존하세요.
           '@ | Set-Content -Path 'dist/학습클리닉_V13/사용안내.txt' -Encoding UTF8
 
@@ -95,12 +99,15 @@ jobs:
           if (!(Test-Path 'dist/학습클리닉_V13/_internal/assets/js/hybrid/statistics-report-export.js')) { throw 'statistics report exporter missing' }
           if (!(Test-Path 'dist/학습클리닉_V13/_internal/assets/vendor/chart.umd.js')) { throw 'packaged Chart.js missing' }
           if (!(Test-Path 'dist/학습클리닉_V13/_internal/assets/vendor/xlsx.full.min.js')) { throw 'packaged SheetJS missing' }
+          if (!(Test-Path 'dist/학습클리닉_V13/_internal/assets/vendor/exceljs.min.js')) { throw 'packaged ExcelJS missing' }
           if (!(Test-Path 'dist/학습클리닉_V13/_internal/assets/vendor/versions.json')) { throw 'vendor version metadata missing' }
           if (!(Test-Path 'dist/학습클리닉_V13/portable.flag')) { throw 'portable.flag missing' }
           $idx = Get-Content -Raw -Encoding UTF8 'dist/학습클리닉_V13/_internal/index.html'
           if ($idx -match 'https?://(cdn\.jsdelivr\.net|cdnjs\.cloudflare\.com|unpkg\.com|fonts\.googleapis\.com|fonts\.gstatic\.com)') { throw 'external CDN reference remains in packaged index' }
           if ($idx -notmatch 'assets/vendor/chart\.umd\.js') { throw 'local Chart.js reference missing' }
           if ($idx -notmatch 'assets/vendor/xlsx\.full\.min\.js') { throw 'local SheetJS reference missing' }
+          $report = Get-Content -Raw -Encoding UTF8 'dist/학습클리닉_V13/_internal/assets/js/hybrid/statistics-report-export.js'
+          if ($report -notmatch 'assets/vendor/exceljs\.min\.js') { throw 'packaged report exporter is not using local ExcelJS' }
 
           $forbidden = Get-ChildItem -Recurse -File 'dist/학습클리닉_V13' | Where-Object {
             $_.Name -ieq 'Python.Runtime.dll' -or $_.FullName -match '(pythonnet|clr_loader|\\clr\\)'
