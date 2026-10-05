@@ -40,6 +40,10 @@ function managerStateForKind(kind) {
   const state = (typeof structuredClone === 'function')
     ? structuredClone(source)
     : JSON.parse(JSON.stringify(source));
+  // Export-only metadata. It is never written back to the Browser/SQLite state.
+  // The Python HWPX print model uses it to reproduce the HTML manager-book title,
+  // target header (학생/학급), and 구분 field while Excel keeps the detailed schema.
+  state.cfg = { ...(state.cfg || {}), __v13ManagerKind: kind };
   state.mat = (state.mat || []).map(m => {
     const copy = { ...m };
     const matchingKind = copy.kind || 'coach';
