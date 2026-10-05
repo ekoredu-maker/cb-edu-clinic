@@ -8,13 +8,15 @@ from domain.settlement import build_settlement
 from services.document_model import (
     appointment_confirmation_model,
     career_confirmation_model,
-    execution_report_model,
     learning_plan_model,
-    manager_book_model,
-    pay_slip_model,
     resignation_model,
     staff_appointment_model,
     timetable_model,
+)
+from services.print_document_model import (
+    execution_report_print_model,
+    manager_book_print_model,
+    pay_slip_print_model,
 )
 from services.hwpx_native_service import create_native_hwpx, render_diagnostics, validate_native_hwpx
 from tests.load_fixture import build_large_state
@@ -60,9 +62,9 @@ def generate_pack(output_dir: Path) -> dict:
     settlement = build_settlement({"state": state, "ym": ym})
 
     models = [
-        ("01_지급명세서.hwpx", pay_slip_model(settlement, staff_by_id[staff_id], staff_id, ym, state["cfg"]["org"])),
-        ("02_월별집행내역.hwpx", execution_report_model(settlement, staff_by_id, ym, state["cfg"]["org"])),
-        ("03_학습지원단관리부.hwpx", manager_book_model(state, staff_id, ym)),
+        ("01_지급명세서.hwpx", pay_slip_print_model(settlement, staff_by_id[staff_id], staff_id, ym, state["cfg"]["org"], state["cfg"]["confirmer"])),
+        ("02_월별집행내역.hwpx", execution_report_print_model(settlement, staff_by_id, ym, state["cfg"]["org"], state["cfg"]["confirmer"])),
+        ("03_학습지원단관리부_학습코칭.hwpx", manager_book_print_model(state, staff_id, ym, kind="coach")),
         ("04_위촉장.hwpx", staff_appointment_model(state, staff_id)),
         ("05_위촉확인서.hwpx", appointment_confirmation_model(state, staff_id)),
         ("06_경력확인서.hwpx", career_confirmation_model(state, staff_id)),
@@ -84,10 +86,13 @@ def generate_pack(output_dir: Path) -> dict:
         "purpose": "한컴오피스 열기/편집/인쇄 UAT용 합성 데이터 HWPX 세트",
         "containsRealPersonalData": False,
         "engine": "CB Edu Clinic V13 native HWPX",
+        "documentContract": "HTML print contract for monthly HWPX / shared contract for administrative forms",
         "documents": [],
         "manualChecks": [
             "한컴오피스에서 경고 없이 열리는지",
             "제목/본문/표의 한글이 깨지지 않는지",
+            "지급명세서가 6열, 월별 집행내역서가 9열, 관리부가 12열인지",
+            "관리부 제목과 구분이 학습코칭으로 표시되고 대상열이 학생인지",
             "셀 너비와 줄바꿈이 읽기 좋은지",
             "페이지 방향(세로/가로)이 manifest 예상값과 일치하는지",
             "singlePageTarget 문서가 한 쪽에 자연스럽게 들어가는지",
@@ -116,6 +121,7 @@ def generate_pack(output_dir: Path) -> dict:
         "# V13 HWPX 한컴오피스 UAT 샘플",
         "",
         "이 폴더의 문서는 모두 합성 데이터로 생성되며 실제 개인정보를 포함하지 않습니다.",
+        "월별 HWPX 3종은 Stage18부터 Excel 상세계약과 분리된 HTML 인쇄계약을 사용합니다.",
         "",
         "## 확인 항목",
     ]
