@@ -2,12 +2,6 @@ from __future__ import annotations
 
 from typing import Any
 
-# Stage18: backend.app imports this module before services.document_model.
-# Importing document_routing here preserves the existing app import surface
-# while routing HWPX/native models to HTML print contracts. Excel explicitly
-# uses the captured detailed export models.
-from services import document_routing as _document_routing  # noqa: F401
-
 
 def settlement_context(settlement: dict[str, Any], staff_id: str, ym: str, org: str = "", confirmer: str = "") -> dict[str, Any]:
     by_staff = settlement.get("byStaff") or {}
