@@ -54,5 +54,6 @@ def test_python_manager_export_keeps_html_kind_selection():
     src = _source(DOC_EXPORT_JS)
     assert "function currentManagerKind()" in src
     assert "function managerStateForKind(kind)" in src
+    assert "__v13ManagerKind: kind" in src
     assert "(log.kind || matchingKind || 'coach') === kind" in src
     assert "state: managerStateForKind(kind), staffId, ym, kind" in src
