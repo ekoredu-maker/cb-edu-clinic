@@ -1,7 +1,6 @@
 window.APP_CONFIG = window.APP_CONFIG || {
   supabaseUrl: "https://jxnirwqwelstxvmnqzry.supabase.co",
-  // Supabase Project Settings > API의 Publishable key를 입력합니다.
-  // Secret/service_role 키는 브라우저/PWA에 절대 넣지 않습니다.
-  supabaseAnonKey: "",
-  demoMode: true
+  // Supabase publishable key: public frontend key. Data access is controlled by Auth + RLS.
+  supabaseAnonKey: "sb_publishable_M3vBnLwxTaH3M0Jo_cjdEQ_oV6d2zdV",
+  demoMode: false
 };
