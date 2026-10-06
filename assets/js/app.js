@@ -6611,10 +6611,13 @@ window.refreshDashboard = function(){
     const byStf = {};
     (db.mat || []).forEach(m => {
       if (m.st !== 'active') return;
+      const matchedLogs = new Set();
+
       (m.slots || []).forEach(slot => {
         const dates = typeof getDatesForDayInMonth === 'function' ? getDatesForDayInMonth(ym, slot.d) : [];
         dates.forEach(date => {
           const existingLog = (m.logs || []).find(l => {
+            if (matchedLogs.has(l)) return false;
             const actualDate = l.date || l.d || '';
             const plannedDate = l.plannedDate || actualDate;
             const plannedStart = l.plannedStart || '';
@@ -6623,6 +6626,8 @@ window.refreshDashboard = function(){
             return plannedDate === date
               && (plannedStart === slot.s || plannedTime.includes(slot.s) || actualTime.includes(slot.s));
           });
+          if (existingLog) matchedLogs.add(existingLog);
+
           const logEntry = existingLog
             ? (() => { if (typeof ensureLogFields === 'function') ensureLogFields(existingLog, m); return existingLog; })()
             : { id:null, date:date, time:`${slot.s}~${slot.e}`, topic:'', status:'scheduled', kind:m.kind || 'coach', minutes:m.kind === 'class' ? (typeof classSessionMinutes === 'function' ? classSessionMinutes(((IDX.stuById||{})[m.stuId] || {}).scType || '초') : 40) : 50 };
@@ -6633,10 +6638,28 @@ window.refreshDashboard = function(){
             if (filter === 'rejected' && s !== 'rejected') return;
           }
           if (!byStf[m.stfId]) byStf[m.stfId] = { rows: [], pendingCnt: 0, verifiedCnt: 0 };
-          byStf[m.stfId].rows.push({ m, l: logEntry, slot, isScheduled: !existingLog });
+          byStf[m.stfId].rows.push({ m, l: logEntry, slot, isScheduled: !existingLog, isUnmatched: false });
           if (s === 'conducted' || s === 'scheduled') byStf[m.stfId].pendingCnt++;
           else if (s === 'verified' || s === 'paid') byStf[m.stfId].verifiedCnt++;
         });
+      });
+
+      // 실제 실적은 시간표 슬롯과 정확히 일치하지 않아도 검증목록에서 절대 사라지지 않도록 한다.
+      (m.logs || []).forEach(l => {
+        try { if (typeof ensureLogFields === 'function') ensureLogFields(l, m); } catch(e) {}
+        if (matchedLogs.has(l)) return;
+        const actualDate = l.date || l.d || '';
+        if (!actualDate.startsWith(ym)) return;
+        const s = l.status || 'conducted';
+        if (filter !== 'all') {
+          if (filter === 'pending' && s !== 'conducted') return;
+          if (filter === 'verified' && s !== 'verified' && s !== 'paid') return;
+          if (filter === 'rejected' && s !== 'rejected') return;
+        }
+        if (!byStf[m.stfId]) byStf[m.stfId] = { rows: [], pendingCnt: 0, verifiedCnt: 0 };
+        byStf[m.stfId].rows.push({ m, l, slot:null, isScheduled:false, isUnmatched:true });
+        if (s === 'conducted') byStf[m.stfId].pendingCnt++;
+        else if (s === 'verified' || s === 'paid') byStf[m.stfId].verifiedCnt++;
       });
     });
 
@@ -6662,14 +6685,15 @@ window.refreshDashboard = function(){
       let currentDate = '';
       let rowsHtml = '';
       group.rows.forEach(r => {
-        const m = r.m, l = r.l, isScheduled = r.isScheduled;
+        const m = r.m, l = r.l, isScheduled = r.isScheduled, isUnmatched = r.isUnmatched;
         const stu = IDX.stuById && IDX.stuById[m.stuId];
         const s = l.status;
         const amt = (s === 'canceled' || s === 'scheduled') ? '-' : (typeof formatMoney === 'function' ? formatMoney(l.amount || (typeof calcLogAmount === 'function' ? calcLogAmount(l) : 0)) : String(l.amount || 0));
         const stColor = s === 'verified' || s === 'paid' ? 'bg-yes' : s === 'rejected' ? 'bg-danger' : s === 'canceled' ? 'bg-no' : s === 'scheduled' ? '' : 'bg-info';
         const stLbl = ({ conducted: '미검증', verified: '✅승인', rejected: '❌반려', canceled: '취소', paid: '지급완료', scheduled: '📅미입력' })[s] || s;
         const kindLbl = (l.kind || m.kind) === 'class' ? '수업협력' : '학습코칭';
-        const subject = stu ? stu.nm : (((m.classInfo || {}).gr) ? `🏫 ${(m.classInfo || {}).gr}-${(m.classInfo || {}).cls}반` : '-');
+        const baseSubject = stu ? stu.nm : (((m.classInfo || {}).gr) ? `🏫 ${(m.classInfo || {}).gr}-${(m.classInfo || {}).cls}반` : '-');
+        const subject = isUnmatched ? (baseSubject + ' · ⏱시간표외/정정') : baseSubject;
         if (currentDate !== l.date) {
           currentDate = l.date;
           rowsHtml += `<tr><td colspan="9" style="background:#f8fafc; font-weight:700; color:#334155; padding:6px 12px">── ${esc(l.date)} (${['일','월','화','수','목','금','토'][new Date(l.date).getDay()]}요일) ──</td></tr>`;
