@@ -179,7 +179,7 @@ async function redeemInvite(inviteToken){
   const password=document.getElementById('invite-password').value;
   const password2=document.getElementById('invite-password2').value;
   const msg=document.getElementById('invite-msg');
-  if(!/^\\d{6}$/.test(code)){
+  if(!/^\d{6}$/.test(code)){
     msg.textContent='승인번호 6자리를 입력해 주세요.';msg.classList.remove('hidden');return;
   }
   if(password.length<10){
