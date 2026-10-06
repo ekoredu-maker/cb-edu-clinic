@@ -120,9 +120,6 @@ function navForRole(role){
 
 async function init(){
   ensureDemoData();
-  if('serviceWorker' in navigator){
-    navigator.serviceWorker.register('./sw.js').catch(()=>{});
-  }
   if(state.demo){
     state.profile=structuredClone(DEMO.profile);
     state.user={id:state.profile.id,email:'demo@local'};
