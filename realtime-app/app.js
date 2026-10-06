@@ -16,7 +16,8 @@ const state = {
   notices: [],
   requests: [],
   settings: null,
-  realtime: null
+  realtime: null,
+  demoPhotoUrl: null
 };
 
 const ROLE_LABEL = {
@@ -369,7 +370,7 @@ async function pageMy(){
   const issued=p.mobile_id_issued_at?formatDateOnly(p.mobile_id_issued_at):'미발급';
   const expires=p.mobile_id_expires_on?formatDateOnly(p.mobile_id_expires_on):'운영기간 중';
   const initials=(p.display_name||'지원단').trim().slice(0,1);
-  let photoUrl='';
+  let photoUrl=state.demo ? (state.demoPhotoUrl||'') : '';
   if(!state.demo && state.user?.id){
     const signed=await state.client.storage
       .from('supporter-id-photos')
@@ -594,8 +595,18 @@ async function uploadMyIdPhoto(input){
     return;
   }
   if(state.demo){
-    toast('사진 등록이 완료되었습니다. (데모)');
-    input.value='';
+    const reader=new FileReader();
+    reader.onload=async()=>{
+      state.demoPhotoUrl=String(reader.result||'');
+      toast('사진 등록이 완료되었습니다. (데모)');
+      input.value='';
+      await renderPage();
+    };
+    reader.onerror=()=>{
+      toast('사진을 읽지 못했습니다.');
+      input.value='';
+    };
+    reader.readAsDataURL(file);
     return;
   }
   try{
