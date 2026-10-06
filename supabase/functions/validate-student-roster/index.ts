@@ -4,7 +4,7 @@ import ExcelJS from "npm:exceljs@4.4.0";
 import Papa from "npm:papaparse@5.5.3";
 
 const MAX_FILE_BYTES = 2 * 1024 * 1024;
-const MAX_ROWS = 300;
+const MAX_ROWS = 200;
 const ALLOWED_ORIGINS = new Set(["https://ekoredu-maker.github.io"]);
 
 function cors(req: Request) {
