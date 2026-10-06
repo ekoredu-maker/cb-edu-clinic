@@ -79,6 +79,23 @@ if ($indexText -match 'https?://(cdn\.jsdelivr\.net|cdnjs\.cloudflare\.com|unpkg
 if ($indexText -notmatch 'assets/vendor/chart\.umd\.js') { throw '로컬 Chart.js 참조 누락' }
 if ($indexText -notmatch 'assets/vendor/xlsx\.full\.min\.js') { throw '로컬 SheetJS 참조 누락' }
 
-Write-Host '[7/7] Build completed' -ForegroundColor Green
+Write-Host '[7/7] Running packaged self-test and creating clean ZIP' -ForegroundColor Cyan
+$p = Start-Process -FilePath (Join-Path $distDir '학습클리닉_V13.exe') -ArgumentList '--self-test' -Wait -PassThru
+if ($p.ExitCode -ne 0) { throw "포터블 자가진단 실패: exit $($p.ExitCode)" }
+
+$dataDir = Join-Path $distDir 'data'
+Remove-Item -Recurse -Force $dataDir -ErrorAction SilentlyContinue
+New-Item -ItemType Directory -Force $dataDir | Out-Null
+@'
+이 폴더에는 실제 업무 데이터(SQLite, 생성 문서)가 저장됩니다.
+프로그램 업데이트 시 이 data 폴더를 삭제하거나 덮어쓰지 마십시오.
+'@ | Set-Content -Path (Join-Path $dataDir '데이터폴더_보존.txt') -Encoding UTF8
+
+$zipPath = Join-Path $repo 'dist/학습클리닉_V13_Windows_Portable_EXE.zip'
+Remove-Item -Force $zipPath -ErrorAction SilentlyContinue
+Compress-Archive -Path $distDir -DestinationPath $zipPath -CompressionLevel Optimal
+
+Write-Host '[PASS] V14 투영 / Python 정산 / HWPX / 오프라인 자가진단 완료' -ForegroundColor Green
 Write-Host "Output: $distDir"
+Write-Host "ZIP: $zipPath"
 Write-Host 'Offline runtime dependencies: PASS' -ForegroundColor Green
