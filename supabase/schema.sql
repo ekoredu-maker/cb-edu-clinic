@@ -1644,3 +1644,155 @@ revoke all on function public.bulk_register_students(jsonb)
   from public, anon;
 grant execute on function public.bulk_register_students(jsonb)
   to authenticated;
+
+
+-- ---------- V14 supporter-student matching ----------
+create sequence if not exists public.assignment_legacy_seq start with 1 increment by 1;
+
+create unique index if not exists assignments_legacy_matching_id_uq
+  on public.assignments(legacy_matching_id)
+  where legacy_matching_id is not null;
+
+create unique index if not exists assignments_one_active_per_student_kind_uq
+  on public.assignments(student_id, kind)
+  where status='active';
+
+create or replace function public.match_supporter_student(
+  p_supporter_id uuid,
+  p_student_id uuid,
+  p_kind text,
+  p_started_on date default null
+)
+returns jsonb
+language plpgsql
+security invoker
+set search_path = public, private, pg_temp
+as $$
+declare
+  v_actor uuid := (select auth.uid());
+  v_supporter public.profiles;
+  v_student public.students;
+  v_existing public.assignments;
+  v_started date := coalesce(p_started_on, (now() at time zone 'Asia/Seoul')::date);
+  v_id uuid;
+  v_legacy text;
+begin
+  if v_actor is null then raise exception '로그인이 필요합니다.'; end if;
+  if not private.is_office_user() then raise exception '학생 배정 권한이 없습니다.'; end if;
+  if p_kind not in ('coach','class') then
+    raise exception '지원유형은 학습코칭 또는 수업지원이어야 합니다.';
+  end if;
+  if v_started > (now() at time zone 'Asia/Seoul')::date then
+    raise exception '배정 시작일은 미래일 수 없습니다.';
+  end if;
+
+  select * into v_supporter from public.profiles where id=p_supporter_id;
+  if v_supporter.id is null or not v_supporter.active then
+    raise exception '활성 학습지원단원을 찾을 수 없습니다.';
+  end if;
+  if not ('supporter' = any(v_supporter.roles)) then
+    raise exception '학습지원단 역할이 없는 사용자입니다.';
+  end if;
+
+  select * into v_student from public.students where id=p_student_id;
+  if v_student.id is null or not v_student.active then
+    raise exception '활성 학생을 찾을 수 없습니다.';
+  end if;
+
+  select * into v_existing
+  from public.assignments
+  where student_id=p_student_id
+    and kind=p_kind
+    and status='active'
+  limit 1;
+
+  if v_existing.id is not null then
+    if v_existing.supporter_id=p_supporter_id then
+      return jsonb_build_object(
+        'ok',true,
+        'existing',true,
+        'assignment_id',v_existing.id,
+        'legacy_matching_id',v_existing.legacy_matching_id
+      );
+    end if;
+    raise exception '이미 동일 지원유형으로 다른 지원단원에게 배정된 학생입니다.';
+  end if;
+
+  v_legacy := 'JCEC-MAT-' || to_char(v_started,'YYYY')
+    || '-' || lpad(nextval('public.assignment_legacy_seq')::text,5,'0');
+
+  insert into public.assignments(
+    legacy_matching_id,supporter_id,student_id,kind,status,started_on
+  )
+  values(
+    v_legacy,p_supporter_id,p_student_id,p_kind,'active',v_started
+  )
+  returning id into v_id;
+
+  return jsonb_build_object(
+    'ok',true,
+    'existing',false,
+    'assignment_id',v_id,
+    'legacy_matching_id',v_legacy,
+    'started_on',v_started
+  );
+end;
+$$;
+
+create or replace function public.end_student_assignment(
+  p_assignment_id uuid,
+  p_ended_on date default null
+)
+returns jsonb
+language plpgsql
+security invoker
+set search_path = public, private, pg_temp
+as $$
+declare
+  v_actor uuid := (select auth.uid());
+  v_assignment public.assignments;
+  v_ended date := coalesce(p_ended_on, (now() at time zone 'Asia/Seoul')::date);
+begin
+  if v_actor is null then raise exception '로그인이 필요합니다.'; end if;
+  if not private.is_office_user() then raise exception '배정 종료 권한이 없습니다.'; end if;
+
+  select * into v_assignment
+  from public.assignments
+  where id=p_assignment_id
+  for update;
+
+  if v_assignment.id is null then raise exception '배정 정보를 찾을 수 없습니다.'; end if;
+  if v_assignment.status <> 'active' then raise exception '활성 배정만 종료할 수 있습니다.'; end if;
+  if v_assignment.started_on is not null and v_ended < v_assignment.started_on then
+    raise exception '종료일은 시작일보다 빠를 수 없습니다.';
+  end if;
+  if v_ended > (now() at time zone 'Asia/Seoul')::date then
+    raise exception '종료일은 미래일 수 없습니다.';
+  end if;
+
+  update public.assignments
+  set status='ended',ended_on=v_ended,updated_at=now()
+  where id=p_assignment_id;
+
+  update public.schedule_plans
+  set active=false,updated_at=now()
+  where assignment_id=p_assignment_id
+    and active=true;
+
+  return jsonb_build_object(
+    'ok',true,
+    'assignment_id',p_assignment_id,
+    'ended_on',v_ended
+  );
+end;
+$$;
+
+revoke all on function public.match_supporter_student(uuid,uuid,text,date)
+  from public, anon;
+revoke all on function public.end_student_assignment(uuid,date)
+  from public, anon;
+
+grant execute on function public.match_supporter_student(uuid,uuid,text,date)
+  to authenticated;
+grant execute on function public.end_student_assignment(uuid,date)
+  to authenticated;

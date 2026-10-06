@@ -1,0 +1,116 @@
+name: V14 Matching Smoke
+
+on:
+  pull_request:
+    paths:
+      - 'realtime-app/**'
+      - 'supabase/schema.sql'
+      - '.github/workflows/v14-matching-smoke.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'realtime-app/**'
+      - 'supabase/schema.sql'
+      - '.github/workflows/v14-matching-smoke.yml'
+  workflow_dispatch:
+
+jobs:
+  matching-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Playwright
+        run: |
+          npm install --no-save playwright@1.56.1
+          npx playwright install --with-deps chromium
+
+      - name: Start static server
+        run: |
+          python3 -m http.server 4173 > /tmp/clinic-http.log 2>&1 &
+          for i in {1..30}; do
+            curl -fsS http://127.0.0.1:4173/realtime-app/ >/dev/null && exit 0
+            sleep 1
+          done
+          cat /tmp/clinic-http.log
+          exit 1
+
+      - name: Verify supporter-student matching
+        run: |
+          node <<'NODE'
+          const { chromium } = require('playwright');
+
+          async function run(viewport, name) {
+            const browser = await chromium.launch({ headless: true });
+            const context = await browser.newContext({ viewport, serviceWorkers: 'block' });
+            await context.addInitScript(() => {
+              window.APP_CONFIG = { demoMode: true };
+              localStorage.setItem('clinic-demo-role', 'admin');
+            });
+            const page = await context.newPage();
+            const errors = [];
+            page.on('pageerror', e => errors.push(String(e)));
+            await page.route('https://cdn.jsdelivr.net/**', route => route.fulfill({
+              status: 200,
+              contentType: 'application/javascript',
+              body: 'window.supabase = window.supabase || {};'
+            }));
+
+            await page.goto('http://127.0.0.1:4173/realtime-app/?matching-smoke=1', {
+              waitUntil: 'domcontentloaded',
+              timeout: 30000
+            });
+
+            await page.getByRole('button', { name: '매칭 관리' }).click();
+            await page.getByText('학습지원단 ↔ 학생 매칭', { exact: true }).waitFor({ state: 'visible' });
+            await page.getByText('2명', { exact: true }).last().waitFor({ state: 'visible' });
+
+            await page.locator('#matching-supporter').selectOption('demo-supporter-2');
+            await page.locator('#matching-student').selectOption('s4');
+            await page.locator('#matching-kind').selectOption('coach');
+
+            page.once('dialog', d => d.accept());
+            await page.getByRole('button', { name: '배정 확정' }).click();
+
+            const activeRow = page.locator('.item').filter({ hasText: '하늘 · 이지원' });
+            await activeRow.waitFor({ state: 'visible' });
+            await activeRow.getByRole('button', { name: '배정 종료' }).waitFor({ state: 'visible' });
+
+            page.once('dialog', d => d.accept());
+            await activeRow.getByRole('button', { name: '배정 종료' }).click();
+
+            const history = page.locator('.item').filter({ hasText: '하늘 · 이지원' }).last();
+            await history.waitFor({ state: 'visible' });
+            await history.getByText('종료', { exact: true }).waitFor({ state: 'visible' });
+
+            await page.screenshot({
+              path: '/tmp/v14-matching-' + name + '.png',
+              fullPage: true
+            });
+
+            if (errors.length) throw new Error(errors.join(' | '));
+            await browser.close();
+          }
+
+          (async () => {
+            await run({ width: 1440, height: 900 }, 'desktop');
+            await run({ width: 390, height: 844 }, 'mobile');
+            console.log('Matching smoke passed.');
+          })().catch(e => {
+            console.error(e);
+            process.exit(1);
+          });
+          NODE
+
+      - name: Upload matching screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: v14-matching-smoke
+          path: /tmp/v14-matching-*.png
+          if-no-files-found: ignore
