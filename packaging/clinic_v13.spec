@@ -1,7 +1,7 @@
 # -*- mode: python ; coding: utf-8 -*-
 import os
 from pathlib import Path
-from PyInstaller.utils.hooks import collect_all, collect_submodules
+from PyInstaller.utils.hooks import collect_submodules
 
 REPO = Path(SPECPATH).resolve().parent
 BACKEND = REPO / "backend"
@@ -24,10 +24,8 @@ template_dir = BACKEND / "templates"
 if template_dir.exists():
     datas.append((str(template_dir), "backend/templates"))
 
-webview_datas, webview_bins, webview_hidden = collect_all("webview")
-datas += webview_datas
-binaries = list(webview_bins)
-hiddenimports = list(webview_hidden)
+binaries = []
+hiddenimports = []
 hiddenimports += collect_submodules("uvicorn")
 hiddenimports += collect_submodules("fastapi")
 hiddenimports += [
@@ -51,7 +49,7 @@ analysis = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=[],
+    excludes=["webview", "pythonnet", "clr_loader", "clr"],
     noarchive=False,
 )
 pyz = PYZ(analysis.pure)
