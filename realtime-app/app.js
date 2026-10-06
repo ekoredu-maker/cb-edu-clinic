@@ -19,6 +19,8 @@ const state = {
   lastInvite: null,
   rosterPreview: null,
   bulkInviteResults: [],
+  studentRosterPreview: null,
+  studentImportResult: null,
   settings: null,
   realtime: null,
   demoPhotoUrl: null
@@ -319,8 +321,8 @@ async function renderPage(){
     'supporter:home':pageSupporterHome,'supporter:today':pageToday,'supporter:schedule':pageSchedule,
     'supporter:students':pageStudents,'supporter:records':pageRecords,'supporter:notices':pageNotices,'supporter:my':pageMy,
     'counselor:home':pageOfficeHome,'counselor:exceptions':pageExceptions,'counselor:counseling':pageCounseling,'counselor:requests':pageRequests,'counselor:notices':pageNotices,
-    'admin:home':pageOfficeHome,'admin:invites':pageInvites,'admin:settlement':pageSettlement,'admin:approvals':pageApprovals,'admin:exceptions':pageExceptions,'admin:notices':pageNotices,'admin:settings':pageSettings,
-    'supervisor:home':pageOfficeHome,'supervisor:invites':pageInvites,'supervisor:stats':pageStats,'supervisor:exceptions':pageExceptions,'supervisor:notices':pageNotices,'supervisor:settings':pageSettings
+    'admin:home':pageOfficeHome,'admin:invites':pageInvites,'admin:student-import':pageStudentImport,'admin:settlement':pageSettlement,'admin:approvals':pageApprovals,'admin:exceptions':pageExceptions,'admin:notices':pageNotices,'admin:settings':pageSettings,
+    'supervisor:home':pageOfficeHome,'supervisor:invites':pageInvites,'supervisor:student-import':pageStudentImport,'supervisor:stats':pageStats,'supervisor:exceptions':pageExceptions,'supervisor:notices':pageNotices,'supervisor:settings':pageSettings
   };
   const fn=pages[key]||pages[state.role+':home'];
   p.innerHTML='<div class="empty">불러오는 중...</div>';
@@ -717,11 +719,183 @@ async function revokeInvitation(id){
   await refreshData();renderPage();toast('초대를 폐기했습니다.');
 }
 
+function supportTypeLabel(v){
+  return ({coach:'학습코칭',class:'수업지원',counseling:'학습상담'})[v]||v||'';
+}
+function studentRosterBadge(status){
+  if(status==='valid') return statusBadge('등록 가능','good');
+  if(status==='duplicate'||status==='duplicate_file') return statusBadge('중복 후보','warn');
+  if(status==='school_missing'||status==='school_ambiguous') return statusBadge('학교 확인','bad');
+  return statusBadge('오류','bad');
+}
+function demoSchoolType(v){
+  const s=String(v||'').trim().replace(/\s+/g,'').toLowerCase();
+  if(['초','초등','초등학교'].includes(s))return '초';
+  if(['중','중등','중학교'].includes(s))return '중';
+  if(['고','고등','고등학교'].includes(s))return '고';
+  if(['특수','특수학교'].includes(s))return '특수';
+  if(['기타'].includes(s))return '기타';
+  return null;
+}
+function demoSupportType(v){
+  const s=String(v||'').trim().replace(/\s+/g,'').toLowerCase();
+  if(!s)return 'coach';
+  if(['coach','코칭','학습코칭','학습지원','학습지원단'].includes(s))return 'coach';
+  if(['class','수업','수업지원','교실지원'].includes(s))return 'class';
+  if(['counseling','counselor','상담','학습상담'].includes(s))return 'counseling';
+  return null;
+}
+function demoActive(v){
+  const s=String(v||'').trim().replace(/\s+/g,'').toLowerCase();
+  if(!s)return true;
+  if(['y','yes','true','1','활성','사용','재학'].includes(s))return true;
+  if(['n','no','false','0','비활성','중지','종료'].includes(s))return false;
+  return null;
+}
+async function parseDemoStudentRoster(file){
+  if(!file.name.toLowerCase().endsWith('.csv')) throw new Error('데모 검증에서는 CSV를 사용해 주세요.');
+  const raw=parseSimpleCsv(await file.text());
+  if(raw.length<2) throw new Error('헤더와 1명 이상의 학생 자료가 필요합니다.');
+  const h=raw[0].map(v=>String(v||'').trim().toLowerCase().replace(/[\s_.()\[\]-]+/g,''));
+  const col=(aliases)=>h.findIndex(v=>aliases.includes(v));
+  const schoolCol=col(['학교','학교명','학교코드','school','schoolname','schoolcode']);
+  const typeCol=col(['학교급','학교유형','schooltype']);
+  const gradeCol=col(['학년','grade']);
+  const classCol=col(['반','학급','class','classno']);
+  const nameCol=col(['학생명','성명','이름','학생이름','fullname','name']);
+  const aliasCol=col(['별칭','학생별칭','alias']);
+  const legacyCol=col(['학생id','학생코드','기존학생id','legacystudentid']);
+  const supportCol=col(['희망지원유형','지원유형','지원형태','preferredsupporttype']);
+  const activeCol=col(['활성','활성상태','상태','active']);
+  if([schoolCol,typeCol,gradeCol,classCol,nameCol].some(x=>x<0)) throw new Error('학교, 학교급, 학년, 반, 학생명 열이 필요합니다.');
+  const demoSchools={
+    '의림초등학교':'demo-school-1',
+    '남당초등학교':'demo-school-2',
+    '홍광초등학교':'demo-school-3',
+    'V14 테스트학교':'127a0924-5de0-4a66-bdfe-de86dabf361a'
+  };
+  const existing=new Set(DEMO.assignments.map(a=>[
+    a.student.school?.name||a.student?.school?.name||'',
+    a.student.full_name,a.student.grade,a.student.class_no
+  ].join('|')));
+  const rows=raw.slice(1,201).map((r,i)=>{
+    const school=String(r[schoolCol]||'').trim();
+    const schoolId=demoSchools[school]||null;
+    const st=demoSchoolType(r[typeCol]);
+    const grade=Number(String(r[gradeCol]||'').trim());
+    const classNo=Number(String(r[classCol]||'').trim());
+    const fullName=String(r[nameCol]||'').trim();
+    const alias=aliasCol>=0?String(r[aliasCol]||'').trim():'';
+    const legacy=legacyCol>=0?String(r[legacyCol]||'').trim():'';
+    const support=supportCol>=0?demoSupportType(r[supportCol]):'coach';
+    const active=activeCol>=0?demoActive(r[activeCol]):true;
+    let status='valid',message='등록 가능';
+    if(!schoolId){status='school_missing';message='등록된 학교를 찾을 수 없음';}
+    else if(!st){status='error';message='학교급 값 오류';}
+    else if(!Number.isInteger(grade)||grade<1||(st==='초'&&grade>6)||(['중','고'].includes(st)&&grade>3)){status='error';message='학년 범위 오류';}
+    else if(!Number.isInteger(classNo)||classNo<1||classNo>99){status='error';message='반 범위 오류';}
+    else if(!fullName){status='error';message='학생명 누락';}
+    else if(!support){status='error';message='희망 지원유형 오류';}
+    else if(active===null){status='error';message='활성상태 값 오류';}
+    else if(existing.has([school,fullName,grade,classNo].join('|'))){status='duplicate';message='기존 동일 학생 후보';}
+    return {row_number:i+2,school,school_id:schoolId,school_type:st,grade,class_no:classNo,full_name:fullName,alias:alias||null,legacy_student_id:legacy||null,preferred_support_type:support,active,status,message};
+  });
+  const keyCounts={};
+  rows.forEach(x=>{if(x.school_id&&x.full_name&&x.grade&&x.class_no){const k=[x.school_id,x.full_name,x.grade,x.class_no].join('|');keyCounts[k]=(keyCounts[k]||0)+1;}});
+  rows.forEach(x=>{const k=[x.school_id,x.full_name,x.grade,x.class_no].join('|');if(x.status==='valid'&&(keyCounts[k]||0)>1){x.status='duplicate_file';x.message='파일 내 동일 학생 후보';}});
+  return {ok:true,filename:file.name,total:rows.length,valid:rows.filter(x=>x.status==='valid').length,invalid:rows.filter(x=>x.status!=='valid').length,truncated:raw.length-1>200,rows};
+}
+async function validateStudentRoster(input){
+  const file=input?.files?.[0];
+  if(!file)return;
+  state.studentRosterPreview=null;
+  state.studentImportResult=null;
+  try{
+    let data;
+    if(state.demo){
+      data=await parseDemoStudentRoster(file);
+    }else{
+      const {data:{session}}=await state.client.auth.getSession();
+      if(!session?.access_token)throw new Error('로그인 세션을 확인해 주세요.');
+      const form=new FormData();
+      form.append('file',file);
+      const res=await fetch(CFG.supabaseUrl+'/functions/v1/validate-student-roster',{
+        method:'POST',
+        headers:{Authorization:'Bearer '+session.access_token,apikey:CFG.supabaseAnonKey},
+        body:form
+      });
+      data=await res.json().catch(()=>({}));
+      if(!res.ok||!data.ok)throw new Error(data.message||'학생 명부를 검증하지 못했습니다.');
+    }
+    state.studentRosterPreview=data;
+    input.value='';
+    await renderPage();
+    toast('학생 명부 검증이 완료되었습니다.');
+  }catch(e){
+    input.value='';
+    toast(e.message||String(e));
+  }
+}
+function downloadStudentRosterTemplate(){
+  const csv='학교,학교급,학년,반,학생명,별칭,학생ID,희망지원유형,활성상태\r\nV14 테스트학교,초,4,1,홍길동,길동,STU-001,학습코칭,Y\r\n';
+  const blob=new Blob(['\ufeff'+csv],{type:'text/csv;charset=utf-8'});
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement('a');
+  a.href=url;a.download='학생_등록명부_양식.csv';a.click();
+  setTimeout(()=>URL.revokeObjectURL(url),1000);
+}
+async function registerValidStudents(){
+  const rows=(state.studentRosterPreview?.rows||[]).filter(x=>x.status==='valid');
+  if(!rows.length){toast('등록 가능한 학생이 없습니다.');return;}
+  if(rows.length>200){toast('한 번에 200명까지만 등록할 수 있습니다.');return;}
+  if(!confirm(rows.length+'명의 학생을 등록하시겠습니까?'))return;
+  const payload=rows.map(x=>({
+    school_id:x.school_id,
+    full_name:x.full_name,
+    alias:x.alias||null,
+    school_type:x.school_type,
+    grade:x.grade,
+    class_no:x.class_no,
+    legacy_student_id:x.legacy_student_id||null,
+    preferred_support_type:x.preferred_support_type||'coach',
+    active:x.active!==false
+  }));
+  if(state.demo){
+    state.studentImportResult={ok:true,inserted:payload.length,skipped:0,results:payload.map((x,i)=>({ok:true,id:'demo-student-'+i,full_name:x.full_name}))};
+    await renderPage();toast('학생 등록이 완료되었습니다. (데모)');return;
+  }
+  const {data,error}=await state.client.rpc('bulk_register_students',{p_rows:payload});
+  if(error){toast(error.message);return;}
+  state.studentImportResult=data;
+  await renderPage();
+  toast('학생 등록이 완료되었습니다.');
+}
+async function pageStudentImport(){
+  const preview=state.studentRosterPreview;
+  const result=state.studentImportResult;
+  const previewHtml=preview
+    ? '<div class="card full" style="margin-top:14px"><div class="row between"><div class="section-title">학생 명부 검증 결과</div><div>'+preview.valid+'명 등록 가능 / '+preview.invalid+'명 확인</div></div>'
+      +(preview.truncated?'<div class="notice">한 번에 200명까지만 검증할 수 있습니다. 파일을 나누어 등록해 주세요.</div>':'')
+      +'<div class="list">'+preview.rows.map(x=>'<div class="item"><div class="row between"><div><h3>'+esc(x.row_number)+'행 · '+esc(x.full_name||'학생명 없음')+'</h3>'
+        +'<div class="meta">'+esc(x.school||'학교 없음')+' · '+esc(x.school_type||'-')+' '+esc(x.grade||'-')+'학년 '+esc(x.class_no||'-')+'반 · '+esc(supportTypeLabel(x.preferred_support_type))+'</div>'
+        +'<div class="tiny">'+esc(x.message)+'</div></div>'+studentRosterBadge(x.status)+'</div></div>').join('')+'</div>'
+      +(preview.valid?'<div class="actions"><button class="btn btn-good" onclick="registerValidStudents()">유효 '+Math.min(preview.valid,200)+'명 학생 등록</button></div>':'')
+      +'</div>' : '';
+  const resultHtml=result
+    ? '<div class="card full" style="margin-top:14px"><div class="section-title">등록 결과</div><div class="grid"><div class="card"><div class="label">등록</div><div class="kpi">'+esc(result.inserted||0)+'명</div></div><div class="card"><div class="label">중복 제외</div><div class="kpi">'+esc(result.skipped||0)+'명</div></div></div></div>' : '';
+  return '<div class="section-title">학생 명부 일괄등록</div>'
+    +'<div class="notice">학교 기본정보에 등록된 학교만 학생을 등록합니다. 학교 오타나 미등록 학교는 자동 생성하지 않습니다.</div>'
+    +'<div class="card full"><p class="muted">필수: 학교, 학교급, 학년, 반, 학생명 · 선택: 별칭, 학생ID, 희망지원유형, 활성상태</p>'
+    +'<div class="actions"><button class="btn btn-ghost" onclick="downloadStudentRosterTemplate()">학생 명부 양식 받기</button><label class="btn btn-primary" for="student-roster-input">XLSX/CSV 명부 선택</label></div>'
+    +'<input id="student-roster-input" class="hidden" type="file" accept=".xlsx,.csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv" onchange="validateStudentRoster(this)"></div>'
+    +previewHtml+resultHtml;
+}
+
 async function pageOfficeHome(){
   const m=officeMetrics();
-  const inviteAction=(state.role==='admin'||state.role==='supervisor')
-    ? '<div class="actions"><button class="btn btn-primary" onclick="go(\'invites\')">학습지원단 초대</button></div>' : '';
-  return '<section class="hero"><h1>'+ROLE_LABEL[state.role]+' 대시보드</h1><p>정상 활동은 자동검증하고 예외만 사람이 확인합니다.</p>'+inviteAction+'</section><div class="grid">'
+  const officeActions=(state.role==='admin'||state.role==='supervisor')
+    ? '<div class="actions"><button class="btn btn-primary" onclick="go(\'invites\')">학습지원단 초대</button><button class="btn btn-ghost" onclick="go(\'student-import\')">학생 명부</button></div>' : '';
+  return '<section class="hero"><h1>'+ROLE_LABEL[state.role]+' 대시보드</h1><p>정상 활동은 자동검증하고 예외만 사람이 확인합니다.</p>'+officeActions+'</section><div class="grid">'
     +'<div class="card"><div class="label">이번 달 완료</div><div class="kpi">'+m.completed.length+'회</div></div>'
     +'<div class="card"><div class="label">자동검증</div><div class="kpi">'+m.auto.length+'회</div></div>'
     +'<div class="card"><div class="label">확인 필요</div><div class="kpi">'+m.review.length+'회</div></div>'
@@ -999,6 +1173,7 @@ async function approveAll(){
 window.signIn=signIn; window.signOut=signOut; window.redeemInvite=redeemInvite; window.switchRole=switchRole; window.go=go;
 window.createInvitation=createInvitation; window.copyKakaoInvite=copyKakaoInvite; window.revokeInvitation=revokeInvitation;
 window.validateSupporterRoster=validateSupporterRoster; window.downloadSupporterRosterTemplate=downloadSupporterRosterTemplate; window.createBulkInvitations=createBulkInvitations; window.copyBulkKakaoInvite=copyBulkKakaoInvite;
+window.validateStudentRoster=validateStudentRoster; window.downloadStudentRosterTemplate=downloadStudentRosterTemplate; window.registerValidStudents=registerValidStudents;
 window.startLesson=startLesson; window.endLesson=endLesson; window.saveLessonRecord=saveLessonRecord; window.setSchoolCurrentLocation=setSchoolCurrentLocation; window.uploadMyIdPhoto=uploadMyIdPhoto;
 window.addCounseling=addCounseling; window.requestScheduleChange=requestScheduleChange;
 window.reverifySession=reverifySession; window.confirmSession=confirmSession; window.rejectSession=rejectSession; window.approveSession=approveSession; window.approveAll=approveAll;

@@ -1,0 +1,122 @@
+name: V14 Student Roster Smoke
+
+on:
+  pull_request:
+    paths:
+      - 'realtime-app/**'
+      - 'supabase/functions/validate-student-roster/**'
+      - '.github/workflows/v14-student-roster-smoke.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'realtime-app/**'
+      - 'supabase/functions/validate-student-roster/**'
+      - '.github/workflows/v14-student-roster-smoke.yml'
+  workflow_dispatch:
+
+jobs:
+  student-roster-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Playwright
+        run: |
+          npm install --no-save playwright@1.56.1
+          npx playwright install --with-deps chromium
+
+      - name: Start static server
+        run: |
+          python3 -m http.server 4173 > /tmp/clinic-http.log 2>&1 &
+          for i in {1..30}; do
+            curl -fsS http://127.0.0.1:4173/realtime-app/ >/dev/null && exit 0
+            sleep 1
+          done
+          cat /tmp/clinic-http.log
+          exit 1
+
+      - name: Verify student roster preview and registration
+        run: |
+          node <<'NODE'
+          const { chromium } = require('playwright');
+
+          async function run(viewport, name) {
+            const browser = await chromium.launch({ headless: true });
+            const context = await browser.newContext({ viewport, serviceWorkers: 'block' });
+            await context.addInitScript(() => {
+              window.APP_CONFIG = { demoMode: true };
+              localStorage.setItem('clinic-demo-role', 'admin');
+            });
+            const page = await context.newPage();
+            const errors = [];
+            page.on('pageerror', e => errors.push(String(e)));
+            await page.route('https://cdn.jsdelivr.net/**', route => route.fulfill({
+              status: 200,
+              contentType: 'application/javascript',
+              body: 'window.supabase = window.supabase || {};'
+            }));
+
+            await page.goto('http://127.0.0.1:4173/realtime-app/?student-roster-smoke=1', {
+              waitUntil: 'domcontentloaded',
+              timeout: 30000
+            });
+
+            await page.getByRole('button', { name: '학생 명부' }).click();
+            await page.getByText('학생 명부 일괄등록', { exact: true }).waitFor({ state: 'visible' });
+
+            const csv = Buffer.from(
+              '학교,학교급,학년,반,학생명,별칭,학생ID,희망지원유형,활성상태\r\n' +
+              '의림초등학교,초,4,1,신규학생1,학생1,STU-DEMO-101,학습코칭,Y\r\n' +
+              '남당초등학교,초,5,2,신규학생2,,STU-DEMO-102,수업지원,Y\r\n' +
+              '미등록학교,초,3,1,오류학생,,STU-DEMO-103,학습코칭,Y\r\n',
+              'utf8'
+            );
+
+            await page.locator('#student-roster-input').setInputFiles({
+              name: 'students.csv',
+              mimeType: 'text/csv',
+              buffer: csv
+            });
+
+            await page.getByText('학생 명부 검증 결과', { exact: true }).waitFor({ state: 'visible' });
+            await page.getByText('2명 등록 가능 / 1명 확인', { exact: true }).waitFor({ state: 'visible' });
+            await page.getByText('등록된 학교를 찾을 수 없음', { exact: true }).waitFor({ state: 'visible' });
+
+            const button = page.getByRole('button', { name: '유효 2명 학생 등록' });
+            page.once('dialog', d => d.accept());
+            await button.click();
+
+            await page.getByText('등록 결과', { exact: true }).waitFor({ state: 'visible' });
+            await page.getByText('2명', { exact: true }).first().waitFor({ state: 'visible' });
+
+            await page.screenshot({
+              path: '/tmp/v14-student-roster-' + name + '.png',
+              fullPage: true
+            });
+
+            if (errors.length) throw new Error(errors.join(' | '));
+            await browser.close();
+          }
+
+          (async () => {
+            await run({ width: 1440, height: 900 }, 'desktop');
+            await run({ width: 390, height: 844 }, 'mobile');
+            console.log('Student roster smoke passed.');
+          })().catch(e => {
+            console.error(e);
+            process.exit(1);
+          });
+          NODE
+
+      - name: Upload student roster screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: v14-student-roster-smoke
+          path: /tmp/v14-student-roster-*.png
+          if-no-files-found: ignore
