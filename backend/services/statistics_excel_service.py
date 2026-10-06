@@ -283,7 +283,10 @@ def _build_summary_sheet(wb: Workbook, state: dict[str, Any], statistics: dict[s
     admin = str(cfg.get("admin") or "")
     date_text = _today_text(as_of)
     title = f"{org} 지역거점 지원 실적" if report_type == "quarter" else f"{org} {base} 지원 실적"
-    _merge_title(ws, title, f"기준일: {date_text}  |  작성: {admin or '-'}", 10)
+    period = statistics.get("period") or {}
+    start_text = str(period.get("start") or "").replace("-", ".")
+    period_text = f"집계기간: {start_text} ~ {date_text}" if start_text else f"기준일: {date_text}"
+    _merge_title(ws, title, f"{period_text}  |  작성: {admin or '-'}", 10)
 
     row = 5
     row = _section(ws, row, "Ⅰ. 핵심 현황", 10)
