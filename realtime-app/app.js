@@ -414,8 +414,8 @@ async function renderPage(){
     'supporter:home':pageSupporterHome,'supporter:today':pageToday,'supporter:schedule':pageSchedule,
     'supporter:students':pageStudents,'supporter:records':pageRecords,'supporter:notices':pageNotices,'supporter:my':pageMy,
     'counselor:home':pageOfficeHome,'counselor:exceptions':pageExceptions,'counselor:counseling':pageCounseling,'counselor:requests':pageRequests,'counselor:notices':pageNotices,
-    'admin:home':pageOfficeHome,'admin:invites':pageInvites,'admin:student-import':pageStudentImport,'admin:matching':pageMatching,'admin:schedule-admin':pageScheduleAdmin,'admin:settlement':pageSettlement,'admin:approvals':pageApprovals,'admin:exceptions':pageExceptions,'admin:notices':pageNotices,'admin:settings':pageSettings,
-    'supervisor:home':pageOfficeHome,'supervisor:invites':pageInvites,'supervisor:student-import':pageStudentImport,'supervisor:matching':pageMatching,'supervisor:schedule-admin':pageScheduleAdmin,'supervisor:stats':pageStats,'supervisor:exceptions':pageExceptions,'supervisor:notices':pageNotices,'supervisor:settings':pageSettings
+    'admin:home':pageOfficeHome,'admin:invites':pageInvites,'admin:student-import':pageStudentImport,'admin:matching':pageMatching,'admin:schedule-admin':pageScheduleAdmin,'admin:v13-handoff':pageV13Handoff,'admin:settlement':pageSettlement,'admin:approvals':pageApprovals,'admin:exceptions':pageExceptions,'admin:notices':pageNotices,'admin:settings':pageSettings,
+    'supervisor:home':pageOfficeHome,'supervisor:invites':pageInvites,'supervisor:student-import':pageStudentImport,'supervisor:matching':pageMatching,'supervisor:schedule-admin':pageScheduleAdmin,'supervisor:v13-handoff':pageV13Handoff,'supervisor:stats':pageStats,'supervisor:exceptions':pageExceptions,'supervisor:notices':pageNotices,'supervisor:settings':pageSettings
   };
   const fn=pages[key]||pages[state.role+':home'];
   p.innerHTML='<div class="empty">불러오는 중...</div>';
@@ -1290,10 +1290,62 @@ async function deactivateSchedulePlan(id){
   await refreshData();renderPage();toast('시간표를 비활성화했습니다.');
 }
 
+function monthLastDay(ym){
+  const m=String(ym||'').match(/^(\d{4})-(\d{2})$/);
+  if(!m)return '';
+  const y=Number(m[1]), month=Number(m[2]);
+  return y+'-'+String(month).padStart(2,'0')+'-'+String(new Date(Date.UTC(y,month,0)).getUTCDate()).padStart(2,'0');
+}
+async function pageV13Handoff(){
+  const ym=seoulDate().slice(0,7);
+  return '<div class="section-title">V13 포터블 연계</div>'
+    +'<div class="notice">완료된 V14 실적을 V13 Python 엔진으로 전달하는 내부 연계파일입니다. GPS 좌표는 포함하지 않습니다.</div>'
+    +'<div class="card full"><div class="field"><label>대상 월</label><input id="v13-handoff-month" type="month" value="'+ym+'"></div>'
+    +'<p class="muted">자동검증·관리자확인·지급상태가 함께 전달됩니다. 승인 전 실적은 V13 정산에 포함되지 않으며, 이후 다시 내보내면 같은 세션 ID가 갱신됩니다.</p>'
+    +'<button class="btn btn-primary" onclick="exportV13Handoff()">V13 연계파일 만들기</button></div>'
+    +'<div class="card full" style="margin-top:14px"><div class="section-title">V13에서 가져오는 방법</div>'
+    +'<p>V13 포터블 프로그램을 열고 상단의 <b>☁️ V14 실적 가져오기</b>를 눌러 방금 받은 JSON 파일을 선택합니다.</p>'
+    +'<p class="tiny">V13 Python 엔진이 매칭ID를 대조하여 실적을 투영하고, Browser 저장소와 SQLite를 함께 갱신합니다. 같은 파일을 다시 불러와도 세션 ID 기준으로 중복되지 않습니다.</p></div>';
+}
+async function exportV13Handoff(){
+  const ym=document.getElementById('v13-handoff-month')?.value||seoulDate().slice(0,7);
+  if(!/^\d{4}-\d{2}$/.test(ym)){toast('대상 월을 확인해 주세요.');return;}
+  if(state.demo){
+    toast('실제 로그인 환경에서 연계파일을 만들 수 있습니다.','warning');
+    return;
+  }
+  const from=ym+'-01', to=monthLastDay(ym);
+  const {data,error}=await state.client
+    .from('v13_session_projection')
+    .select('*')
+    .gte('work_date',from)
+    .lte('work_date',to)
+    .order('work_date',{ascending:true})
+    .order('start_at',{ascending:true});
+  if(error){toast(error.message);return;}
+  const sessions=data||[];
+  if(!sessions.length){toast('선택한 월의 완료 실적이 없습니다.','warning');return;}
+  const payload={
+    schema:'cb-edu-clinic-v14-v13-projection-v1',
+    exported_at:new Date().toISOString(),
+    org_name:state.settings?.org_name||'제천교육지원청',
+    month:ym,
+    sessions
+  };
+  const blob=new Blob([JSON.stringify(payload,null,2)],{type:'application/json;charset=utf-8'});
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement('a');
+  a.href=url;
+  a.download='V14_V13_실적연계_'+ym+'.json';
+  document.body.appendChild(a);a.click();a.remove();
+  setTimeout(()=>URL.revokeObjectURL(url),1000);
+  toast('V13 연계파일 '+sessions.length+'건을 만들었습니다.','success');
+}
+
 async function pageOfficeHome(){
   const m=officeMetrics();
   const officeActions=(state.role==='admin'||state.role==='supervisor')
-    ? '<div class="actions"><button class="btn btn-primary" onclick="go(\'invites\')">학습지원단 초대</button><button class="btn btn-ghost" onclick="go(\'student-import\')">학생 명부</button><button class="btn btn-good" onclick="go(\'matching\')">매칭 관리</button><button class="btn btn-ghost" onclick="go(\'schedule-admin\')">시간표 관리</button></div>' : '';
+    ? '<div class="actions"><button class="btn btn-primary" onclick="go(\'invites\')">학습지원단 초대</button><button class="btn btn-ghost" onclick="go(\'student-import\')">학생 명부</button><button class="btn btn-good" onclick="go(\'matching\')">매칭 관리</button><button class="btn btn-ghost" onclick="go(\'schedule-admin\')">시간표 관리</button><button class="btn btn-ghost" onclick="go(\'v13-handoff\')">V13 연계</button></div>' : '';
   return '<section class="hero"><h1>'+ROLE_LABEL[state.role]+' 대시보드</h1><p>정상 활동은 자동검증하고 예외만 사람이 확인합니다.</p>'+officeActions+'</section><div class="grid">'
     +'<div class="card"><div class="label">이번 달 완료</div><div class="kpi">'+m.completed.length+'회</div></div>'
     +'<div class="card"><div class="label">자동검증</div><div class="kpi">'+m.auto.length+'회</div></div>'
@@ -1575,6 +1627,7 @@ window.validateSupporterRoster=validateSupporterRoster; window.downloadSupporter
 window.validateStudentRoster=validateStudentRoster; window.downloadStudentRosterTemplate=downloadStudentRosterTemplate; window.registerValidStudents=registerValidStudents;
 window.syncMatchingKind=syncMatchingKind; window.createStudentMatch=createStudentMatch; window.endStudentMatch=endStudentMatch;
 window.syncScheduleMode=syncScheduleMode; window.syncScheduleAssignment=syncScheduleAssignment; window.createSchedulePlan=createSchedulePlan; window.deactivateSchedulePlan=deactivateSchedulePlan;
+window.exportV13Handoff=exportV13Handoff;
 window.startLesson=startLesson; window.endLesson=endLesson; window.saveLessonRecord=saveLessonRecord; window.setSchoolCurrentLocation=setSchoolCurrentLocation; window.uploadMyIdPhoto=uploadMyIdPhoto;
 window.addCounseling=addCounseling; window.requestScheduleChange=requestScheduleChange;
 window.reverifySession=reverifySession; window.confirmSession=confirmSession; window.rejectSession=rejectSession; window.approveSession=approveSession; window.approveAll=approveAll;

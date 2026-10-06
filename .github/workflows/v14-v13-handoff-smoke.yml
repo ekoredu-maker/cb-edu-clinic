@@ -1,0 +1,252 @@
+name: V14 V13 Handoff Smoke
+
+on:
+  pull_request:
+    paths:
+      - 'realtime-app/**'
+      - 'assets/js/app.js'
+      - 'assets/js/bootstrap.js'
+      - 'assets/js/hybrid/python-bridge.js'
+      - 'assets/js/hybrid/realtime-import.js'
+      - '.github/workflows/v14-v13-handoff-smoke.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'realtime-app/**'
+      - 'assets/js/app.js'
+      - 'assets/js/bootstrap.js'
+      - 'assets/js/hybrid/python-bridge.js'
+      - 'assets/js/hybrid/realtime-import.js'
+      - '.github/workflows/v14-v13-handoff-smoke.yml'
+  workflow_dispatch:
+
+jobs:
+  handoff-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Playwright
+        run: |
+          npm install --no-save playwright@1.56.1
+          npx playwright install --with-deps chromium
+
+      - name: Start static server
+        run: |
+          python3 -m http.server 4173 > /tmp/clinic-http.log 2>&1 &
+          for i in {1..30}; do
+            curl -fsS http://127.0.0.1:4173/realtime-app/ >/dev/null && exit 0
+            sleep 1
+          done
+          cat /tmp/clinic-http.log
+          exit 1
+
+      - name: Verify V14 export page and V13 import flow
+        run: |
+          node <<'NODE'
+          const { chromium } = require('playwright');
+
+          async function v14Side(browser) {
+            const context = await browser.newContext({
+              viewport: { width: 390, height: 844 },
+              serviceWorkers: 'block'
+            });
+            await context.addInitScript(() => {
+              window.APP_CONFIG = { demoMode: true };
+              localStorage.setItem('clinic-demo-role', 'admin');
+            });
+            const page = await context.newPage();
+            await page.route('https://cdn.jsdelivr.net/**', route => route.fulfill({
+              status: 200,
+              contentType: 'application/javascript',
+              body: 'window.supabase = window.supabase || {};'
+            }));
+            const errors=[];
+            page.on('pageerror', e => errors.push(String(e)));
+
+            await page.goto('http://127.0.0.1:4173/realtime-app/?handoff-smoke=1', {
+              waitUntil: 'domcontentloaded',
+              timeout: 30000
+            });
+            await page.getByRole('button', { name: 'V13 연계' }).click();
+            await page.getByText('V13 포터블 연계', { exact: true }).waitFor({ state: 'visible' });
+            await page.getByRole('button', { name: 'V13 연계파일 만들기' }).waitFor({ state: 'visible' });
+            await page.getByText('GPS 좌표는 포함하지 않습니다.', { exact: false }).waitFor({ state: 'visible' });
+
+            await page.screenshot({
+              path: '/tmp/v14-v13-handoff-v14.png',
+              fullPage: true
+            });
+            if(errors.length) throw new Error('V14 page errors: '+errors.join(' | '));
+            await context.close();
+          }
+
+          async function v13Side(browser) {
+            const context = await browser.newContext({
+              viewport: { width: 1440, height: 900 },
+              serviceWorkers: 'block'
+            });
+            const page = await context.newPage();
+            const errors=[];
+            page.on('pageerror', e => errors.push(String(e)));
+
+            await page.route('https://cdn.jsdelivr.net/npm/chart.js/**', route => route.fulfill({
+              status: 200,
+              contentType: 'application/javascript',
+              body: `
+                window.Chart = class Chart {
+                  constructor(){ }
+                  destroy(){ }
+                  static getChart(){ return null; }
+                };
+              `
+            }));
+            await page.route('https://cdnjs.cloudflare.com/ajax/libs/xlsx/**', route => route.fulfill({
+              status: 200,
+              contentType: 'application/javascript',
+              body: 'window.XLSX = window.XLSX || {};'
+            }));
+            await page.route('https://cdn.jsdelivr.net/gh/orioncactus/**', route => route.fulfill({
+              status: 200,
+              contentType: 'text/css',
+              body: ''
+            }));
+
+            await page.route('**/api/health', route => route.fulfill({
+              status: 503,
+              contentType: 'application/json',
+              body: JSON.stringify({ detail:'smoke health bypass' })
+            }));
+            await page.route('**/api/realtime/project', async route => {
+              const body = route.request().postDataJSON();
+              const state = JSON.parse(JSON.stringify(body.state));
+              const row = body.sessions[0];
+              state.mat[0].logs = [{
+                id: row.id,
+                date: row.work_date,
+                d: row.work_date,
+                s: '14:00',
+                e: '14:50',
+                time: '14:00~14:50',
+                minutes: 50,
+                topic: row.topic,
+                content: row.content,
+                place: row.place,
+                kind: row.kind,
+                status: 'verified',
+                source: 'realtime'
+              }];
+              await route.fulfill({
+                status: 200,
+                contentType: 'application/json',
+                body: JSON.stringify({
+                  ok:true,state,projected:1,updated:0,skipped:0,warnings:[]
+                })
+              });
+            });
+            await page.route('**/api/storage/import', route => route.fulfill({
+              status: 200,
+              contentType: 'application/json',
+              body: JSON.stringify({ ok:true })
+            }));
+            await page.route('**/api/storage/compare', route => route.fulfill({
+              status: 200,
+              contentType: 'application/json',
+              body: JSON.stringify({ ok:true })
+            }));
+
+            await page.goto('http://127.0.0.1:4173/?handoff-smoke=1', {
+              waitUntil: 'domcontentloaded',
+              timeout: 30000
+            });
+
+            await page.locator('#login-pw').fill('1111');
+            await page.getByRole('button', { name: '로그인', exact: true }).click();
+            await page.locator('#app-header').waitFor({ state: 'visible', timeout: 10000 });
+            await page.locator('#v14-realtime-import-btn').waitFor({ state: 'visible', timeout: 10000 });
+
+            await page.evaluate(async () => {
+              const state = window.__V13_GET_BROWSER_STATE__();
+              state.stf = [{ id:'stf-1', nm:'지원단A', st:'active' }];
+              state.stu = [{ id:'stu-1', nm:'학생A', sc:'테스트초', gr:4, cls:1 }];
+              state.mat = [{
+                id:'TEST-MAT-01',
+                stfId:'stf-1',
+                stuId:'stu-1',
+                kind:'coach',
+                st:'active',
+                slots:[{d:'화',s:'14:00',e:'14:50'}],
+                logs:[]
+              }];
+              await window.__V13_APPLY_PROJECTED_STATE__(state);
+            });
+
+            const payload = {
+              schema:'cb-edu-clinic-v14-v13-projection-v1',
+              exported_at:'2026-10-06T12:00:00Z',
+              month:'2026-10',
+              sessions:[{
+                id:'sess-handoff-1',
+                legacy_matching_id:'TEST-MAT-01',
+                work_date:'2026-10-06',
+                kind:'coach',
+                topic:'연계 테스트',
+                content:'V14에서 V13으로 투영',
+                place:'테스트실',
+                verification_state:'auto_verified',
+                settlement_state:'approved'
+              }]
+            };
+
+            page.once('dialog', d => d.accept());
+            await page.locator('#v14-realtime-import-file').setInputFiles({
+              name:'V14_V13_실적연계_2026-10.json',
+              mimeType:'application/json',
+              buffer:Buffer.from(JSON.stringify(payload),'utf8')
+            });
+
+            await page.getByText(/V14 실적 반영 완료:/).waitFor({ state:'visible', timeout:10000 });
+
+            const logId = await page.evaluate(() =>
+              window.__V13_GET_BROWSER_STATE__().mat[0].logs[0]?.id || ''
+            );
+            if(logId !== 'sess-handoff-1'){
+              throw new Error('Projected log was not applied to V13 browser state.');
+            }
+
+            await page.screenshot({
+              path: '/tmp/v14-v13-handoff-v13.png',
+              fullPage: true
+            });
+
+            if(errors.length) throw new Error('V13 page errors: '+errors.join(' | '));
+            await context.close();
+          }
+
+          (async()=>{
+            const browser=await chromium.launch({headless:true});
+            try{
+              await v14Side(browser);
+              await v13Side(browser);
+              console.log('V14→V13 handoff smoke passed.');
+            }finally{
+              await browser.close();
+            }
+          })().catch(e=>{
+            console.error(e);
+            process.exit(1);
+          });
+          NODE
+
+      - name: Upload handoff screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: v14-v13-handoff-smoke
+          path: /tmp/v14-v13-handoff-*.png
+          if-no-files-found: ignore

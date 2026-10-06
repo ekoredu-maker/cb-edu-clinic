@@ -6656,3 +6656,44 @@ Object.assign(window.ClinicApp, {
   openEditRecModal: (typeof openEditRecModal !== 'undefined' ? openEditRecModal : undefined),
   saveEditRec: (typeof saveEditRec !== 'undefined' ? saveEditRec : undefined),
 });
+
+
+/* ===== V14 -> V13 realtime file handoff ===== */
+window.__V13_GET_BROWSER_STATE__ = function(){
+  return JSON.parse(JSON.stringify(db));
+};
+
+window.__V13_APPLY_PROJECTED_STATE__ = async function(nextState){
+  if(!nextState || typeof nextState !== 'object'){
+    throw new Error('투영 상태가 올바르지 않습니다.');
+  }
+  for(const key of ['stf','stu','mat','trn']){
+    if(!Array.isArray(nextState[key])){
+      throw new Error('투영 상태의 '+key+' 배열이 없습니다.');
+    }
+  }
+  if(!nextState.cfg || typeof nextState.cfg !== 'object'){
+    throw new Error('투영 상태의 기본설정이 없습니다.');
+  }
+
+  db = JSON.parse(JSON.stringify(nextState));
+  if(!Array.isArray(db.log)) db.log = [];
+  await saveAll();
+  buildIndex();
+
+  try{ refreshDashboard(); }catch(e){}
+  try{ renStaff(); }catch(e){}
+  try{ renStu(); }catch(e){}
+  try{ renMatch(); }catch(e){}
+  try{ loadValidation(); }catch(e){}
+  try{ if(typeof refreshMgrStfSelect==='function') refreshMgrStfSelect(); }catch(e){}
+  try{ if(typeof refreshPayStfSelect==='function') refreshPayStfSelect(); }catch(e){}
+  try{ if(typeof fillTTSelects==='function') fillTTSelects(); }catch(e){}
+
+  return {
+    ok:true,
+    staff:db.stf.length,
+    students:db.stu.length,
+    matchings:db.mat.length
+  };
+};
