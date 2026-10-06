@@ -778,7 +778,7 @@ async function parseDemoStudentRoster(file){
     a.student.school?.name||a.student?.school?.name||'',
     a.student.full_name,a.student.grade,a.student.class_no
   ].join('|')));
-  const rows=raw.slice(1,301).map((r,i)=>{
+  const rows=raw.slice(1,201).map((r,i)=>{
     const school=String(r[schoolCol]||'').trim();
     const schoolId=demoSchools[school]||null;
     const st=demoSchoolType(r[typeCol]);
@@ -803,7 +803,7 @@ async function parseDemoStudentRoster(file){
   const keyCounts={};
   rows.forEach(x=>{if(x.school_id&&x.full_name&&x.grade&&x.class_no){const k=[x.school_id,x.full_name,x.grade,x.class_no].join('|');keyCounts[k]=(keyCounts[k]||0)+1;}});
   rows.forEach(x=>{const k=[x.school_id,x.full_name,x.grade,x.class_no].join('|');if(x.status==='valid'&&(keyCounts[k]||0)>1){x.status='duplicate_file';x.message='파일 내 동일 학생 후보';}});
-  return {ok:true,filename:file.name,total:rows.length,valid:rows.filter(x=>x.status==='valid').length,invalid:rows.filter(x=>x.status!=='valid').length,truncated:raw.length-1>300,rows};
+  return {ok:true,filename:file.name,total:rows.length,valid:rows.filter(x=>x.status==='valid').length,invalid:rows.filter(x=>x.status!=='valid').length,truncated:raw.length-1>200,rows};
 }
 async function validateStudentRoster(input){
   const file=input?.files?.[0];
@@ -875,7 +875,7 @@ async function pageStudentImport(){
   const result=state.studentImportResult;
   const previewHtml=preview
     ? '<div class="card full" style="margin-top:14px"><div class="row between"><div class="section-title">학생 명부 검증 결과</div><div>'+preview.valid+'명 등록 가능 / '+preview.invalid+'명 확인</div></div>'
-      +(preview.truncated?'<div class="notice">앞의 300명까지만 검증했습니다. 실제 등록은 한 번에 200명까지 가능합니다.</div>':'')
+      +(preview.truncated?'<div class="notice">한 번에 200명까지만 검증할 수 있습니다. 파일을 나누어 등록해 주세요.</div>':'')
       +'<div class="list">'+preview.rows.map(x=>'<div class="item"><div class="row between"><div><h3>'+esc(x.row_number)+'행 · '+esc(x.full_name||'학생명 없음')+'</h3>'
         +'<div class="meta">'+esc(x.school||'학교 없음')+' · '+esc(x.school_type||'-')+' '+esc(x.grade||'-')+'학년 '+esc(x.class_no||'-')+'반 · '+esc(supportTypeLabel(x.preferred_support_type))+'</div>'
         +'<div class="tiny">'+esc(x.message)+'</div></div>'+studentRosterBadge(x.status)+'</div></div>').join('')+'</div>'
