@@ -13,7 +13,7 @@ function escapeHtml(v){
 
 async function refreshStatistics(){
   if (!PythonBridge.isAvailable()) return null;
-  const asOf = document.getElementById('stat-date')?.value || '';
+  const asOf = document.getElementById('stat-date')?.value || new Date().toISOString().slice(0,10);
   const reportType = document.getElementById('stat-type')?.value || '';
   statsCache = await EngineSource.statistics(true, { asOf, reportType });
   window.__V13_AUTHORITATIVE_STATS__ = statsCache;
