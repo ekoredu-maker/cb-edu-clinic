@@ -6834,3 +6834,69 @@ window.__V13_APPLY_PROJECTED_STATE__ = async function(nextState){
     matchings:db.mat.length
   };
 };
+
+
+/* =================================================================
+ * V13 verification edit normalization patch
+ * - treat legacy/pending-like verification statuses as editable pending
+ * - keep verified/paid locked
+ * ================================================================= */
+(function(){
+  'use strict';
+
+  function normalizePendingStatus(log){
+    if(!log || typeof log !== 'object') return log;
+    const raw = String(log.status || '').trim().toLowerCase();
+    if(!raw || raw === 'pending' || raw === 'unverified' || raw === 'not_verified' || raw === '미검증'){
+      log.status = 'conducted';
+    }
+    return log;
+  }
+
+  window.isEditablePendingLog = function(log){
+    normalizePendingStatus(log);
+    return !!log && log.status === 'conducted';
+  };
+
+  const _origEnsureLogFields_v13verify = window.ensureLogFields;
+  window.ensureLogFields = function(log, matching){
+    const out = typeof _origEnsureLogFields_v13verify === 'function'
+      ? _origEnsureLogFields_v13verify(log, matching)
+      : log;
+    return normalizePendingStatus(out);
+  };
+
+  const _origOpenEditRecModal_v13verify = window.openEditRecModal;
+  window.openEditRecModal = function(matId, logId){
+    const m = (db.mat || []).find(x => x.id === matId);
+    const l = m ? (m.logs || []).find(x => x.id === logId) : null;
+    if(l) normalizePendingStatus(l);
+    return _origOpenEditRecModal_v13verify(matId, logId);
+  };
+
+  const _origSaveEditRec_v13verify = window.saveEditRec;
+  window.saveEditRec = async function(matId, logId, btn){
+    const m = (db.mat || []).find(x => x.id === matId);
+    const l = m ? (m.logs || []).find(x => x.id === logId) : null;
+    if(l) normalizePendingStatus(l);
+    return _origSaveEditRec_v13verify(matId, logId, btn);
+  };
+
+  const _origLoadVerify_v13verify = window.loadVerify;
+  window.loadVerify = function(){
+    (db.mat || []).forEach(m => {
+      (m.logs || []).forEach(l => normalizePendingStatus(l));
+    });
+    return _origLoadVerify_v13verify();
+  };
+
+  const _origLoadStfRecord_v13verify = window.loadStfRecord;
+  if(typeof _origLoadStfRecord_v13verify === 'function'){
+    window.loadStfRecord = function(){
+      (db.mat || []).forEach(m => {
+        (m.logs || []).forEach(l => normalizePendingStatus(l));
+      });
+      return _origLoadStfRecord_v13verify();
+    };
+  }
+})();
