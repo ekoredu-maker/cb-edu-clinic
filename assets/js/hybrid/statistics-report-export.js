@@ -108,7 +108,7 @@ function dyslexBorder(s){
   const mk=()=>({applied:0,tested:0,pos_therapy:0,pos_coach:0,pos_class:0,neg_therapy:0,neg_coach:0,neg_class:0,unsup:0,reasons:[]});
   const out={dyslex:mk(),border:mk()};
   (s.stu||[]).forEach(stu=>{const areas=stu.areas||[],types=stu.supportTypes||[],diag=stu.diagTest||{},unsup=stu.unsupported||{};
-    [['dyslex','DYSLEX','dyslexia'],['border','BORDER','borderline']].forEach(([key,area,posKey])=>{if(!areas.includes(area)) return; const r=out[key]; r.applied++; if(diag.done) r.tested++; const prefix=diag[posKey]?'pos':'neg'; if(types.includes('치료기관연계')) r[`${prefix}_therapy`]++; if(types.includes('방과후학습코칭')) r[`${prefix}_coach`]++; if(types.includes('수업협력코칭')) r[`${prefix}_class`]++; if(unsup.is){r.unsup++; if(unsup.reason) r.reasons.push(unsup.reason);}});
+    [['dyslex','DYSLEX','dyslexia'],['border','BORDER','borderline']].forEach(([key,area,posKey])=>{if(!areas.includes(area)) return; const r=out[key]; r.applied++; if(diag.done){ r.tested++; const prefix=diag[posKey]?'pos':'neg'; if(types.includes('치료기관연계')) r[`${prefix}_therapy`]++; if(types.includes('방과후학습코칭')) r[`${prefix}_coach`]++; if(types.includes('수업협력코칭')) r[`${prefix}_class`]++; } if(unsup.is){r.unsup++; if(unsup.reason) r.reasons.push(unsup.reason);}});
   }); return out;
 }
 function reportMetrics(s,gradePivot){ const gt=totals(gradePivot); return [['등록 학생',(s.stu||[]).length,'명'],['활동 지원단',(s.stf||[]).filter(x=>x.st==='active').length,'명'],['활성 매칭',(s.mat||[]).filter(x=>x.st==='active').length,'건'],['실제 학습코칭',gt.coach,'명'],['실제 수업협력',gt.class_cnt,'학급']]; }
@@ -130,7 +130,7 @@ function buildSummarySheet(wb,s,dateStr,type){
   ws.getRow(row).values=['지역','방과후 신청','수업협력 신청(학급)','수업협력 신청(학생)','심리진단','방과후 실적','수업협력 실적(학급)','수업협력 실적(학생)','치료기관연계','비고']; headerRow(ws,row,10); row++;
   const rGrand=Object.fromEntries(METRIC_KEYS.map(k=>[k,0])); regions(s).forEach((name,idx)=>{const d=region[name]||{}; ws.getRow(row).values=[name,...METRIC_KEYS.map(k=>Number(d[k]||0)),'']; dataRow(ws,row,10,idx%2===1); METRIC_KEYS.forEach(k=>rGrand[k]+=Number(d[k]||0)); row++;});
   ws.getRow(row).values=['합계',...METRIC_KEYS.map(k=>rGrand[k]),'']; totalRow(ws,row,10,C.yellow); row+=2;
-  row=section(ws,row,'Ⅳ. 작성 기준',10); ['• 신청 현황은 학생 등록 및 수업협력 활성 매칭을 기준으로 집계합니다.','• 실제 실적은 실시·검증·지급 상태의 활동 로그를 기준으로 집계합니다.','• 치료기관연계 세부 시트는 개인정보 최소화를 위해 학생 성명을 포함하지 않습니다.','• 본 파일은 보고·회의·결재 보조용 통계자료이며 원자료 수정용 파일이 아닙니다.'].forEach(note=>{ws.mergeCells(row,1,row,10); const c=ws.getCell(row,1); c.value=note; c.font=font(8,false,C.muted); c.alignment=align('left'); ws.getRow(row).height=18; row++;});
+  row=section(ws,row,'Ⅳ. 작성 기준',10); ['• 신청 현황은 현재 학생 등록정보 및 활성 수업협력 학급을 기준으로 한 스냅샷입니다.','• 실제 실적은 선택한 월/분기의 시작일부터 기준일까지 실시·검증·지급 상태의 활동 로그를 중복 제거하여 집계합니다.','• 치료기관연계 세부 시트는 개인정보 최소화를 위해 학생 성명을 포함하지 않습니다.','• 본 파일은 보고·회의·결재 보조용 통계자료이며 원자료 수정용 파일이 아닙니다.'].forEach(note=>{ws.mergeCells(row,1,row,10); const c=ws.getCell(row,1); c.value=note; c.font=font(8,false,C.muted); c.alignment=align('left'); ws.getRow(row).height=18; row++;});
   ws.views=[{state:'frozen',ySplit:gradeHeader,showGridLines:false}]; setPage(ws,`A1:J${row}`,`${gradeHeader}:${gradeHeader}`);
 }
 
