@@ -24,6 +24,8 @@ const state = {
   matchingSupporters: [],
   matchingStudents: [],
   matchingAssignments: [],
+  scheduleAdminPlans: [],
+  activeSchools: [],
   settings: null,
   realtime: null,
   demoPhotoUrl: null
@@ -100,10 +102,12 @@ function toast(msg){
 function ensureDemoData(){
   if(DEMO.plans.length) return;
   const today=seoulDate(), dow=isoDow();
+  const end=new Date(today+'T12:00:00Z'); end.setUTCDate(end.getUTCDate()+90);
+  const effectiveTo=end.toISOString().slice(0,10);
   DEMO.plans=[
-    {id:'p1',assignment_id:'a1',weekday:dow,specific_date:null,planned_start:'14:00',planned_end:'14:50',place:'학습지원실',school:{name:'의림초등학교'},assignment:DEMO.assignments[0]},
-    {id:'p2',assignment_id:'a2',weekday:dow,specific_date:null,planned_start:'15:10',planned_end:'16:00',place:'상담실',school:{name:'남당초등학교'},assignment:DEMO.assignments[1]},
-    {id:'p3',assignment_id:'a3',weekday:dow===7?1:dow+1,specific_date:null,planned_start:'14:30',planned_end:'15:20',place:'도서실',school:{name:'홍광초등학교'},assignment:DEMO.assignments[2]}
+    {id:'p1',assignment_id:'a1',weekday:dow,specific_date:null,planned_start:'14:00',planned_end:'14:50',place:'학습지원실',effective_from:today,effective_to:effectiveTo,active:true,school:{id:'demo-school-1',name:'의림초등학교'},assignment:DEMO.assignments[0]},
+    {id:'p2',assignment_id:'a2',weekday:dow,specific_date:null,planned_start:'15:10',planned_end:'16:00',place:'상담실',effective_from:today,effective_to:effectiveTo,active:true,school:{id:'demo-school-2',name:'남당초등학교'},assignment:DEMO.assignments[1]},
+    {id:'p3',assignment_id:'a3',weekday:dow===7?1:dow+1,specific_date:null,planned_start:'14:30',planned_end:'15:20',place:'도서실',effective_from:today,effective_to:effectiveTo,active:true,school:{id:'demo-school-3',name:'홍광초등학교'},assignment:DEMO.assignments[2]}
   ];
   DEMO.sessions=[
     {
@@ -269,9 +273,23 @@ async function refreshData(){
         student:{...a.student,preferred_support_type:'coach'}
       }));
     }
+    if(!DEMO.activeSchools){
+      DEMO.activeSchools=[
+        {id:'demo-school-1',name:'의림초등학교',active:true},
+        {id:'demo-school-2',name:'남당초등학교',active:true},
+        {id:'demo-school-3',name:'홍광초등학교',active:true},
+        {id:'demo-school-4',name:'V14 테스트학교',active:true}
+      ];
+    }
     state.matchingSupporters=DEMO.matchingSupporters;
     state.matchingStudents=DEMO.matchingStudents;
     state.matchingAssignments=DEMO.matchingAssignments;
+    state.activeSchools=DEMO.activeSchools;
+    state.scheduleAdminPlans=DEMO.plans.map(p=>({
+      ...p,
+      school:p.school||DEMO.activeSchools.find(s=>s.id===p.school_id)||null,
+      assignment:DEMO.matchingAssignments.find(a=>a.id===p.assignment_id)||p.assignment
+    }));
     return;
   }
   const role=state.role;
@@ -329,11 +347,27 @@ async function refreshData(){
         .limit(300);
       if(matchingQ.error) throw matchingQ.error;
       state.matchingAssignments=matchingQ.data||[];
+
+      const schoolQ=await state.client.from('schools')
+        .select('id,name,active')
+        .eq('active',true)
+        .order('name',{ascending:true});
+      if(schoolQ.error) throw schoolQ.error;
+      state.activeSchools=schoolQ.data||[];
+
+      const scheduleQ=await state.client.from('schedule_plans')
+        .select('id,assignment_id,school_id,specific_date,weekday,planned_start,planned_end,place,effective_from,effective_to,active,created_at,school:schools(id,name),assignment:assignments!inner(id,kind,status,supporter_id,student_id,supporter:profiles!assignments_supporter_id_fkey(id,display_name),student:students(id,full_name,alias,grade,class_no,school:schools(id,name)))')
+        .order('created_at',{ascending:false})
+        .limit(500);
+      if(scheduleQ.error) throw scheduleQ.error;
+      state.scheduleAdminPlans=scheduleQ.data||[];
     }else{
       state.invitations=[];
       state.matchingSupporters=[];
       state.matchingStudents=[];
       state.matchingAssignments=[];
+      state.activeSchools=[];
+      state.scheduleAdminPlans=[];
     }
   }
 }
@@ -344,6 +378,7 @@ function subscribeRealtime(){
     .on('postgres_changes',{event:'*',schema:'public',table:'sessions'},async()=>{await refreshData();renderPage();})
     .on('postgres_changes',{event:'*',schema:'public',table:'assignments'},async()=>{await refreshData();renderPage();})
     .on('postgres_changes',{event:'*',schema:'public',table:'students'},async()=>{await refreshData();renderPage();})
+    .on('postgres_changes',{event:'*',schema:'public',table:'schedule_plans'},async()=>{await refreshData();renderPage();})
     .on('postgres_changes',{event:'*',schema:'public',table:'notices'},async()=>{await refreshData();renderPage();})
     .subscribe();
 }
@@ -379,8 +414,8 @@ async function renderPage(){
     'supporter:home':pageSupporterHome,'supporter:today':pageToday,'supporter:schedule':pageSchedule,
     'supporter:students':pageStudents,'supporter:records':pageRecords,'supporter:notices':pageNotices,'supporter:my':pageMy,
     'counselor:home':pageOfficeHome,'counselor:exceptions':pageExceptions,'counselor:counseling':pageCounseling,'counselor:requests':pageRequests,'counselor:notices':pageNotices,
-    'admin:home':pageOfficeHome,'admin:invites':pageInvites,'admin:student-import':pageStudentImport,'admin:matching':pageMatching,'admin:settlement':pageSettlement,'admin:approvals':pageApprovals,'admin:exceptions':pageExceptions,'admin:notices':pageNotices,'admin:settings':pageSettings,
-    'supervisor:home':pageOfficeHome,'supervisor:invites':pageInvites,'supervisor:student-import':pageStudentImport,'supervisor:matching':pageMatching,'supervisor:stats':pageStats,'supervisor:exceptions':pageExceptions,'supervisor:notices':pageNotices,'supervisor:settings':pageSettings
+    'admin:home':pageOfficeHome,'admin:invites':pageInvites,'admin:student-import':pageStudentImport,'admin:matching':pageMatching,'admin:schedule-admin':pageScheduleAdmin,'admin:settlement':pageSettlement,'admin:approvals':pageApprovals,'admin:exceptions':pageExceptions,'admin:notices':pageNotices,'admin:settings':pageSettings,
+    'supervisor:home':pageOfficeHome,'supervisor:invites':pageInvites,'supervisor:student-import':pageStudentImport,'supervisor:matching':pageMatching,'supervisor:schedule-admin':pageScheduleAdmin,'supervisor:stats':pageStats,'supervisor:exceptions':pageExceptions,'supervisor:notices':pageNotices,'supervisor:settings':pageSettings
   };
   const fn=pages[key]||pages[state.role+':home'];
   p.innerHTML='<div class="empty">불러오는 중...</div>';
@@ -1067,10 +1102,198 @@ async function endStudentMatch(id){
   await refreshData();renderPage();toast('배정을 종료했습니다.');
 }
 
+const WEEKDAY_LABEL={1:'월',2:'화',3:'수',4:'목',5:'금',6:'토',7:'일'};
+function addDateDays(dateStr,days){
+  const d=new Date(dateStr+'T12:00:00Z');
+  d.setUTCDate(d.getUTCDate()+days);
+  return d.toISOString().slice(0,10);
+}
+function dateIsoDow(dateStr){
+  const d=new Date(dateStr+'T12:00:00Z').getUTCDay();
+  return d===0?7:d;
+}
+function scheduleTimeOverlap(a,b){
+  const as=String(a.planned_start||'').slice(0,5), ae=String(a.planned_end||'').slice(0,5);
+  const bs=String(b.planned_start||'').slice(0,5), be=String(b.planned_end||'').slice(0,5);
+  return as<be && ae>bs;
+}
+function scheduleDateOverlap(a,b){
+  const as=a.specific_date||null, bs=b.specific_date||null;
+  if(as&&bs)return as===bs;
+  if(as&&!bs){
+    return Number(b.weekday)===dateIsoDow(as)
+      && as>=String(b.effective_from||'0000-01-01')
+      && as<=String(b.effective_to||'9999-12-31');
+  }
+  if(!as&&bs){
+    return Number(a.weekday)===dateIsoDow(bs)
+      && bs>=String(a.effective_from||'0000-01-01')
+      && bs<=String(a.effective_to||'9999-12-31');
+  }
+  return Number(a.weekday)===Number(b.weekday)
+    && String(a.effective_from||'0000-01-01')<=String(b.effective_to||'9999-12-31')
+    && String(b.effective_from||'0000-01-01')<=String(a.effective_to||'9999-12-31');
+}
+function existingScheduleConflicts(){
+  const rows=(state.scheduleAdminPlans||[]).filter(p=>p.active!==false&&p.assignment?.status!=='ended');
+  const conflicts=[];
+  for(let i=0;i<rows.length;i++){
+    for(let j=i+1;j<rows.length;j++){
+      const a=rows[i],b=rows[j];
+      const sameSupporter=a.assignment?.supporter_id&&a.assignment?.supporter_id===b.assignment?.supporter_id;
+      const sameStudent=a.assignment?.student_id&&a.assignment?.student_id===b.assignment?.student_id;
+      if(!(sameSupporter||sameStudent))continue;
+      if(!scheduleTimeOverlap(a,b)||!scheduleDateOverlap(a,b))continue;
+      conflicts.push({a,b,sameSupporter,sameStudent});
+    }
+  }
+  return conflicts;
+}
+function schedulePlanLabel(p){
+  const time=String(p.planned_start||'').slice(0,5)+'~'+String(p.planned_end||'').slice(0,5);
+  if(p.specific_date)return p.specific_date+' · '+time;
+  return '매주 '+(WEEKDAY_LABEL[Number(p.weekday)]||'?')+'요일 · '+time+' · '+esc(p.effective_from||'')+'~'+esc(p.effective_to||'');
+}
+function syncScheduleMode(){
+  const mode=document.getElementById('schedule-mode')?.value||'recurring';
+  document.getElementById('schedule-recurring-fields')?.classList.toggle('hidden',mode!=='recurring');
+  document.getElementById('schedule-specific-fields')?.classList.toggle('hidden',mode!=='specific');
+}
+function syncScheduleAssignment(){
+  const assignmentId=document.getElementById('schedule-assignment')?.value||'';
+  const assignment=(state.matchingAssignments||[]).find(a=>a.id===assignmentId);
+  const schoolId=assignment?.student?.school?.id;
+  const schoolSelect=document.getElementById('schedule-school');
+  if(schoolId&&schoolSelect&&[...schoolSelect.options].some(o=>o.value===schoolId))schoolSelect.value=schoolId;
+}
+async function pageScheduleAdmin(){
+  const assignments=(state.matchingAssignments||[]).filter(a=>a.status==='active');
+  const plans=state.scheduleAdminPlans||[];
+  const activePlans=plans.filter(p=>p.active!==false);
+  const inactivePlans=plans.filter(p=>p.active===false).slice(0,20);
+  const conflicts=existingScheduleConflicts();
+  const firstAssignment=assignments[0]||null;
+  const defaultSchoolId=firstAssignment?.student?.school?.id||state.activeSchools?.[0]?.id||'';
+  const assignmentOptions=assignments.map(a=>'<option value="'+esc(a.id)+'">'+esc(a.supporter?.display_name||'지원단')+' · '+esc(a.student?.alias||a.student?.full_name||'학생')+' · '+assignmentKindLabel(a.kind)+'</option>').join('');
+  const schoolOptions=(state.activeSchools||[]).map(s=>'<option value="'+esc(s.id)+'" '+(s.id===defaultSchoolId?'selected':'')+'>'+esc(s.name)+'</option>').join('');
+  const activeHtml=activePlans.length
+    ? '<div class="list">'+activePlans.map(p=>'<div class="item"><div class="row between"><div><h3>'+esc(p.assignment?.supporter?.display_name||'지원단')+' · '+esc(p.assignment?.student?.alias||p.assignment?.student?.full_name||'학생')+'</h3>'
+      +'<div class="meta">'+schedulePlanLabel(p)+' · '+esc(p.school?.name||'학교')+' · '+esc(p.place||'')+'</div></div>'+statusBadge('활성','good')+'</div>'
+      +'<div class="actions"><button class="btn btn-danger" onclick="deactivateSchedulePlan(\''+p.id+'\')">시간표 비활성화</button></div></div>').join('')+'</div>'
+    : '<div class="empty">활성 시간표가 없습니다.</div>';
+  const inactiveHtml=inactivePlans.length
+    ? '<div class="list">'+inactivePlans.map(p=>'<div class="item"><div class="row between"><div><h3>'+esc(p.assignment?.supporter?.display_name||'지원단')+' · '+esc(p.assignment?.student?.alias||p.assignment?.student?.full_name||'학생')+'</h3>'
+      +'<div class="meta">'+schedulePlanLabel(p)+' · '+esc(p.place||'')+'</div></div>'+statusBadge('비활성','neutral')+'</div></div>').join('')+'</div>'
+    : '<div class="empty">비활성 시간표가 없습니다.</div>';
+  const conflictHtml=conflicts.length
+    ? '<div class="notice" style="margin-top:14px"><b>기존 시간표 충돌 '+conflicts.length+'건</b><br>'+conflicts.slice(0,5).map(x=>{
+        const who=x.sameSupporter&&x.sameStudent?'동일 지원단·학생':x.sameSupporter?'지원단 일정':'학생 일정';
+        return esc(who+' · '+(x.a.assignment?.supporter?.display_name||'지원단')+' · '+String(x.a.planned_start).slice(0,5)+'~'+String(x.a.planned_end).slice(0,5)+' ↔ '+String(x.b.planned_start).slice(0,5)+'~'+String(x.b.planned_end).slice(0,5));
+      }).join('<br>')+(conflicts.length>5?'<br>외 '+(conflicts.length-5)+'건':'')+'</div>'
+    : '<div class="notice" style="margin-top:14px">현재 활성 시간표에서 지원단·학생 중복시간 충돌이 발견되지 않았습니다.</div>';
+  return '<div class="section-title">시간표 관리</div>'
+    +'<div class="notice">반복 시간표 한 건을 만들면 적용기간 동안 해당 요일의 일정으로 사용됩니다. 새 시간표는 DB에서 지원단·학생 중복시간을 다시 검사합니다.</div>'
+    +'<div class="grid"><div class="card"><div class="label">활성 배정</div><div class="kpi">'+assignments.length+'건</div></div>'
+    +'<div class="card"><div class="label">활성 시간표</div><div class="kpi">'+activePlans.length+'건</div></div>'
+    +'<div class="card"><div class="label">기존 충돌</div><div class="kpi">'+conflicts.length+'건</div></div></div>'
+    +conflictHtml
+    +'<div class="card full" style="margin-top:14px"><div class="section-title">새 시간표</div>'
+    +'<div class="field"><label>배정</label><select id="schedule-assignment" onchange="syncScheduleAssignment()">'+(assignmentOptions||'<option value="">활성 배정 없음</option>')+'</select></div>'
+    +'<div class="field"><label>시간표 유형</label><select id="schedule-mode" onchange="syncScheduleMode()"><option value="recurring">반복 시간표</option><option value="specific">특정일 시간표</option></select></div>'
+    +'<div id="schedule-recurring-fields"><div class="field"><label>요일</label><select id="schedule-weekday">'+Object.entries(WEEKDAY_LABEL).map(([k,v])=>'<option value="'+k+'" '+(Number(k)===isoDow()?'selected':'')+'>'+v+'요일</option>').join('')+'</select></div>'
+    +'<div class="field"><label>적용 시작일</label><input id="schedule-effective-from" type="date" value="'+seoulDate()+'"></div>'
+    +'<div class="field"><label>적용 종료일</label><input id="schedule-effective-to" type="date" value="'+addDateDays(seoulDate(),90)+'"></div></div>'
+    +'<div id="schedule-specific-fields" class="hidden"><div class="field"><label>특정일</label><input id="schedule-specific-date" type="date" value="'+seoulDate()+'"></div></div>'
+    +'<div class="field"><label>시작시간</label><input id="schedule-start" type="time" value="14:00"></div>'
+    +'<div class="field"><label>종료시간</label><input id="schedule-end" type="time" value="14:50"></div>'
+    +'<div class="field"><label>학교</label><select id="schedule-school">'+(schoolOptions||'<option value="">활성 학교 없음</option>')+'</select></div>'
+    +'<div class="field"><label>장소</label><input id="schedule-place" placeholder="예: 학습지원실"></div>'
+    +'<button class="btn btn-good" onclick="createSchedulePlan()">시간표 생성</button></div>'
+    +'<div class="section-title" style="margin-top:18px">현재 시간표</div>'+activeHtml
+    +'<div class="section-title" style="margin-top:18px">비활성 시간표</div>'+inactiveHtml;
+}
+function demoScheduleConflict(candidate){
+  const rows=(state.scheduleAdminPlans||[]).filter(p=>p.active!==false);
+  for(const p of rows){
+    const sameSupporter=p.assignment?.supporter_id===candidate.assignment?.supporter_id;
+    const sameStudent=p.assignment?.student_id===candidate.assignment?.student_id;
+    if(!(sameSupporter||sameStudent))continue;
+    if(scheduleTimeOverlap(p,candidate)&&scheduleDateOverlap(p,candidate)){
+      const who=sameSupporter&&sameStudent?'같은 지원단원과 학생':sameSupporter?'지원단원':'학생';
+      return '시간표 충돌: '+who+'의 기존 일정이 겹칩니다. ('+String(p.planned_start).slice(0,5)+'~'+String(p.planned_end).slice(0,5)+')';
+    }
+  }
+  return '';
+}
+async function createSchedulePlan(){
+  const assignmentId=document.getElementById('schedule-assignment')?.value||'';
+  const mode=document.getElementById('schedule-mode')?.value||'recurring';
+  const start=document.getElementById('schedule-start')?.value||'';
+  const end=document.getElementById('schedule-end')?.value||'';
+  const place=document.getElementById('schedule-place')?.value.trim()||'';
+  const schoolId=document.getElementById('schedule-school')?.value||'';
+  const weekday=Number(document.getElementById('schedule-weekday')?.value||0);
+  const specificDate=document.getElementById('schedule-specific-date')?.value||null;
+  const effectiveFrom=document.getElementById('schedule-effective-from')?.value||null;
+  const effectiveTo=document.getElementById('schedule-effective-to')?.value||null;
+  if(!assignmentId||!schoolId){toast('배정과 학교를 선택해 주세요.');return;}
+  if(!start||!end||end<=start){toast('시작·종료시간을 확인해 주세요.');return;}
+  if(!place){toast('수업 장소를 입력해 주세요.');return;}
+  if(mode==='specific'&&!specificDate){toast('특정일을 선택해 주세요.');return;}
+  if(mode==='recurring'&&(!weekday||!effectiveFrom||!effectiveTo||effectiveTo<effectiveFrom)){toast('반복 요일과 적용기간을 확인해 주세요.');return;}
+  const assignment=(state.matchingAssignments||[]).find(a=>a.id===assignmentId);
+  const studentSchoolId=assignment?.student?.school?.id;
+  if(studentSchoolId&&studentSchoolId!==schoolId){
+    if(!confirm('학생 소속학교와 다른 학교가 선택되었습니다. 그래도 이 장소에서 수업합니까?'))return;
+  }
+  if(state.demo){
+    const school=(state.activeSchools||[]).find(s=>s.id===schoolId)||null;
+    const row={
+      id:'demo-plan-'+Date.now(),assignment_id:assignmentId,school_id:schoolId,
+      specific_date:mode==='specific'?specificDate:null,
+      weekday:mode==='recurring'?weekday:null,
+      planned_start:start,planned_end:end,place,
+      effective_from:mode==='specific'?specificDate:effectiveFrom,
+      effective_to:mode==='specific'?specificDate:effectiveTo,
+      active:true,school,assignment
+    };
+    const conflict=demoScheduleConflict(row);
+    if(conflict){toast(conflict);return;}
+    DEMO.plans.push(row);
+    await refreshData();renderPage();toast('시간표를 생성했습니다. (데모)');return;
+  }
+  const {error}=await state.client.rpc('create_schedule_plan_checked',{
+    p_assignment_id:assignmentId,
+    p_mode:mode,
+    p_planned_start:start,
+    p_planned_end:end,
+    p_place:place,
+    p_school_id:schoolId,
+    p_weekday:mode==='recurring'?weekday:null,
+    p_specific_date:mode==='specific'?specificDate:null,
+    p_effective_from:mode==='recurring'?effectiveFrom:null,
+    p_effective_to:mode==='recurring'?effectiveTo:null
+  });
+  if(error){toast(error.message);return;}
+  await refreshData();renderPage();toast('시간표를 생성했습니다.');
+}
+async function deactivateSchedulePlan(id){
+  const plan=(state.scheduleAdminPlans||[]).find(p=>p.id===id);
+  if(!plan)return;
+  if(!confirm((plan.assignment?.student?.alias||plan.assignment?.student?.full_name||'학생')+' 학생의 시간표를 비활성화하시겠습니까?\n이미 저장된 수업 실적은 삭제되지 않습니다.'))return;
+  if(state.demo){
+    const p=DEMO.plans.find(x=>x.id===id);if(p)p.active=false;
+    await refreshData();renderPage();toast('시간표를 비활성화했습니다. (데모)');return;
+  }
+  const {error}=await state.client.rpc('deactivate_schedule_plan',{p_schedule_plan_id:id});
+  if(error){toast(error.message);return;}
+  await refreshData();renderPage();toast('시간표를 비활성화했습니다.');
+}
+
 async function pageOfficeHome(){
   const m=officeMetrics();
   const officeActions=(state.role==='admin'||state.role==='supervisor')
-    ? '<div class="actions"><button class="btn btn-primary" onclick="go(\'invites\')">학습지원단 초대</button><button class="btn btn-ghost" onclick="go(\'student-import\')">학생 명부</button><button class="btn btn-good" onclick="go(\'matching\')">매칭 관리</button></div>' : '';
+    ? '<div class="actions"><button class="btn btn-primary" onclick="go(\'invites\')">학습지원단 초대</button><button class="btn btn-ghost" onclick="go(\'student-import\')">학생 명부</button><button class="btn btn-good" onclick="go(\'matching\')">매칭 관리</button><button class="btn btn-ghost" onclick="go(\'schedule-admin\')">시간표 관리</button></div>' : '';
   return '<section class="hero"><h1>'+ROLE_LABEL[state.role]+' 대시보드</h1><p>정상 활동은 자동검증하고 예외만 사람이 확인합니다.</p>'+officeActions+'</section><div class="grid">'
     +'<div class="card"><div class="label">이번 달 완료</div><div class="kpi">'+m.completed.length+'회</div></div>'
     +'<div class="card"><div class="label">자동검증</div><div class="kpi">'+m.auto.length+'회</div></div>'
@@ -1351,6 +1574,7 @@ window.createInvitation=createInvitation; window.copyKakaoInvite=copyKakaoInvite
 window.validateSupporterRoster=validateSupporterRoster; window.downloadSupporterRosterTemplate=downloadSupporterRosterTemplate; window.createBulkInvitations=createBulkInvitations; window.copyBulkKakaoInvite=copyBulkKakaoInvite;
 window.validateStudentRoster=validateStudentRoster; window.downloadStudentRosterTemplate=downloadStudentRosterTemplate; window.registerValidStudents=registerValidStudents;
 window.syncMatchingKind=syncMatchingKind; window.createStudentMatch=createStudentMatch; window.endStudentMatch=endStudentMatch;
+window.syncScheduleMode=syncScheduleMode; window.syncScheduleAssignment=syncScheduleAssignment; window.createSchedulePlan=createSchedulePlan; window.deactivateSchedulePlan=deactivateSchedulePlan;
 window.startLesson=startLesson; window.endLesson=endLesson; window.saveLessonRecord=saveLessonRecord; window.setSchoolCurrentLocation=setSchoolCurrentLocation; window.uploadMyIdPhoto=uploadMyIdPhoto;
 window.addCounseling=addCounseling; window.requestScheduleChange=requestScheduleChange;
 window.reverifySession=reverifySession; window.confirmSession=confirmSession; window.rejectSession=rejectSession; window.approveSession=approveSession; window.approveAll=approveAll;
