@@ -112,7 +112,7 @@ function getRoles(){
 }
 function navForRole(role){
   const common=[['home','홈','⌂'],['notices','공지','●']];
-  if(role==='supporter') return [['home','홈','⌂'],['today','오늘','◷'],['schedule','시간표','▦'],['students','학생','◎'],['records','기록','✎'],['notices','공지','●'],['my','내정보','▣']];
+  if(role==='supporter') return [['home','홈','⌂'],['today','오늘','◷'],['schedule','시간표','▦'],['students','학생','◎'],['records','기록','✎'],['my','내정보','▣']];
   if(role==='counselor') return [['home','현황','⌂'],['exceptions','예외','!'],['counseling','상담','✎'],['requests','변경요청','⇄'],...common.slice(1)];
   if(role==='admin') return [['home','현황','⌂'],['invites','초대','＋'],['settlement','정산','₩'],['approvals','승인','✓'],['exceptions','예외','!'],['settings','설정','⚙']];
   return [['home','현황','⌂'],['invites','초대','＋'],['stats','통계','▥'],['exceptions','예외','!'],['notices','공지','●'],['settings','설정','⚙']];
