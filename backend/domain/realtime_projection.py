@@ -4,7 +4,10 @@ from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-# 대한민국은 현재 일광절약시간제를 사용하지 않으므로 UTC+9 고정 오프셋을 사용한다.\n# Windows 포터블 환경에서 tzdata 패키지 없이도 동일하게 동작한다.\nSEOUL = timezone(timedelta(hours=9), name="Asia/Seoul")\n
+# 대한민국은 현재 일광절약시간제를 사용하지 않으므로 UTC+9 고정 오프셋을 사용한다.
+# Windows 포터블 환경에서 tzdata 패키지 없이도 동일하게 동작한다.
+SEOUL = timezone(timedelta(hours=9), name="Asia/Seoul")
+
 
 def _parse_dt(value: Any) -> datetime | None:
     if not value:
