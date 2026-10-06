@@ -119,6 +119,19 @@ jobs:
             await page.getByText('JCEC-LS-DEMO-0001', { exact: true }).waitFor({ state: 'visible', timeout: 5000 });
             await page.getByText('법정 신분증이 아닙니다.', { exact: false }).waitFor({ state: 'visible', timeout: 5000 });
 
+            const png = Buffer.from(
+              'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9Z3xkAAAAASUVORK5CYII=',
+              'base64'
+            );
+            const photoInput = page.locator('#id-photo-input');
+            await photoInput.setInputFiles({
+              name: 'profile.png',
+              mimeType: 'image/png',
+              buffer: png
+            });
+            await page.locator('.id-avatar.photo img').waitFor({ state: 'visible', timeout: 5000 });
+            await page.getByText('사진 교체', { exact: true }).waitFor({ state: 'visible', timeout: 5000 });
+
             await page.screenshot({
               path: '/tmp/v14-mobile-id-' + name + '.png',
               fullPage: true
@@ -138,7 +151,7 @@ jobs:
               await check(browser, 'mobile', { width: 390, height: 844 });
               await checkMobileId(browser, 'desktop', { width: 1440, height: 900 });
               await checkMobileId(browser, 'mobile', { width: 390, height: 844 });
-              console.log('V14 login and mobile ID smoke passed on desktop and mobile.');
+              console.log('V14 login, mobile ID, and photo self-registration smoke passed on desktop and mobile.');
             } finally {
               await browser.close();
             }
