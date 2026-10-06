@@ -6486,6 +6486,11 @@ window.refreshDashboard = function(){
       minutes=endMin-startMin;
     }
 
+    if(!l.plannedDate) l.plannedDate = l.date || l.d || newDate;
+    if(!l.plannedTime) l.plannedTime = l.time || ((l.s && l.e) ? (l.s+'~'+l.e) : '');
+    if(!l.plannedStart) l.plannedStart = l.s || (l.plannedTime ? l.plannedTime.split(/[~\-]/)[0].trim() : '');
+    if(!l.plannedEnd) l.plannedEnd = l.e || (l.plannedTime ? (l.plannedTime.split(/[~\-]/)[1] || '').trim() : '');
+
     l.date = newDate;
     l.d = newDate;
     l.time = newTime;
@@ -6609,7 +6614,15 @@ window.refreshDashboard = function(){
       (m.slots || []).forEach(slot => {
         const dates = typeof getDatesForDayInMonth === 'function' ? getDatesForDayInMonth(ym, slot.d) : [];
         dates.forEach(date => {
-          const existingLog = (m.logs || []).find(l => l.date === date && (l.time || '').includes(slot.s));
+          const existingLog = (m.logs || []).find(l => {
+            const actualDate = l.date || l.d || '';
+            const plannedDate = l.plannedDate || actualDate;
+            const plannedStart = l.plannedStart || '';
+            const plannedTime = l.plannedTime || '';
+            const actualTime = l.time || '';
+            return plannedDate === date
+              && (plannedStart === slot.s || plannedTime.includes(slot.s) || actualTime.includes(slot.s));
+          });
           const logEntry = existingLog
             ? (() => { if (typeof ensureLogFields === 'function') ensureLogFields(existingLog, m); return existingLog; })()
             : { id:null, date:date, time:`${slot.s}~${slot.e}`, topic:'', status:'scheduled', kind:m.kind || 'coach', minutes:m.kind === 'class' ? (typeof classSessionMinutes === 'function' ? classSessionMinutes(((IDX.stuById||{})[m.stuId] || {}).scType || '초') : 40) : 50 };
