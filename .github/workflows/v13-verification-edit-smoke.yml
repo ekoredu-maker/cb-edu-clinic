@@ -114,13 +114,15 @@ jobs:
               }];
               state.trn=[];
               await window.__V13_APPLY_PROJECTED_STATE__(state);
-              window.goTab('t5',null);
+            });
+            await page.locator('button[data-tab="t5"]').click();
+            await page.evaluate(()=>{
               document.getElementById('ver-month').value='2026-10';
               document.getElementById('ver-filter').value='pending';
               window.loadVerify();
             });
 
-            const row=page.locator('#ver-area tr').filter({hasText:'수정 전 주제'}).first();
+            const row=page.locator('#t5 #ver-area tr').filter({hasText:'수정 전 주제'}).first();
             await row.waitFor({state:'visible',timeout:10000});
             const editButton=row.locator('button').filter({hasText:'수정'});
             await editButton.waitFor({state:'visible',timeout:10000});
