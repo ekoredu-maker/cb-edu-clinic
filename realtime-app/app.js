@@ -15,6 +15,8 @@ const state = {
   assignments: [],
   notices: [],
   requests: [],
+  invitations: [],
+  lastInvite: null,
   settings: null,
   realtime: null,
   demoPhotoUrl: null
@@ -122,6 +124,11 @@ async function init(){
   if('serviceWorker' in navigator){
     navigator.serviceWorker.register('./sw.js').catch(()=>{});
   }
+  const inviteToken=new URLSearchParams(location.search).get('invite');
+  if(state.demo && inviteToken){
+    renderInviteRegistration(inviteToken);
+    return;
+  }
   if(state.demo){
     state.profile=structuredClone(DEMO.profile);
     state.user={id:state.profile.id,email:'demo@local'};
@@ -138,6 +145,7 @@ async function init(){
 
   state.client=window.supabase.createClient(CFG.supabaseUrl,CFG.supabaseAnonKey);
   const {data:{session}}=await state.client.auth.getSession();
+  if(inviteToken && !session){ renderInviteRegistration(inviteToken); return; }
   if(!session){ renderLogin(); return; }
   state.user=session.user;
   await loadProfile();
@@ -151,6 +159,59 @@ function renderLogin(){
     +'<div class="field"><label>비밀번호</label><input id="login-password" type="password" autocomplete="current-password"></div>'
     +'<button class="btn btn-primary" style="width:100%" onclick="signIn()">로그인</button><div id="login-msg" class="notice hidden"></div></div>';
 }
+function renderInviteRegistration(inviteToken){
+  const safeToken=/^[a-f0-9]{48}$/i.test(inviteToken||'')?inviteToken:'';
+  if(!safeToken){
+    $app.innerHTML='<div class="login"><h2>초대 링크 확인</h2><p class="muted">초대 링크가 올바르지 않습니다. 담당자에게 새 링크를 요청해 주세요.</p></div>';
+    return;
+  }
+  $app.innerHTML='<div class="login"><h2>학습지원단 등록</h2>'
+    +'<p class="muted">카카오톡으로 받은 초대 링크입니다. 담당자에게 별도로 안내받은 6자리 승인번호를 입력해 주세요.</p>'
+    +'<div class="notice">승인번호는 카카오톡 초대문에 포함되지 않습니다. 5회 잘못 입력하면 초대가 잠깁니다.</div>'
+    +'<div class="field"><label>승인번호</label><input id="invite-code" inputmode="numeric" maxlength="6" autocomplete="one-time-code" placeholder="6자리"></div>'
+    +'<div class="field"><label>사용할 비밀번호</label><input id="invite-password" type="password" autocomplete="new-password" placeholder="10자 이상"></div>'
+    +'<div class="field"><label>비밀번호 확인</label><input id="invite-password2" type="password" autocomplete="new-password"></div>'
+    +'<button class="btn btn-primary" style="width:100%" onclick="redeemInvite(\''+safeToken+'\')">등록 완료</button>'
+    +'<div id="invite-msg" class="notice hidden"></div></div>';
+}
+async function redeemInvite(inviteToken){
+  const code=document.getElementById('invite-code').value.trim();
+  const password=document.getElementById('invite-password').value;
+  const password2=document.getElementById('invite-password2').value;
+  const msg=document.getElementById('invite-msg');
+  if(!/^\\d{6}$/.test(code)){
+    msg.textContent='승인번호 6자리를 입력해 주세요.';msg.classList.remove('hidden');return;
+  }
+  if(password.length<10){
+    msg.textContent='비밀번호는 10자 이상으로 설정해 주세요.';msg.classList.remove('hidden');return;
+  }
+  if(password!==password2){
+    msg.textContent='비밀번호 확인이 일치하지 않습니다.';msg.classList.remove('hidden');return;
+  }
+  if(state.demo){
+    msg.textContent='등록 화면 검증이 완료되었습니다. (데모)';msg.classList.remove('hidden');return;
+  }
+  try{
+    const res=await fetch(CFG.supabaseUrl+'/functions/v1/redeem-supporter-invite',{
+      method:'POST',
+      headers:{'Content-Type':'application/json','apikey':CFG.supabaseAnonKey},
+      body:JSON.stringify({invite_token:inviteToken,approval_code:code,password})
+    });
+    const data=await res.json().catch(()=>({}));
+    if(!res.ok||!data.ok) throw new Error(data.message||'등록하지 못했습니다.');
+    const signed=await state.client.auth.signInWithPassword({email:data.email,password});
+    if(signed.error) throw signed.error;
+    state.user=signed.data.user;
+    history.replaceState({},'',location.pathname);
+    await loadProfile();
+    subscribeRealtime();
+    renderShell();
+    toast('학습지원단 등록이 완료되었습니다.');
+  }catch(e){
+    msg.textContent=e.message||String(e);msg.classList.remove('hidden');
+  }
+}
+
 async function signIn(){
   const email=document.getElementById('login-email').value.trim();
   const password=document.getElementById('login-password').value;
@@ -175,6 +236,7 @@ async function refreshData(){
   if(state.demo){
     state.sessions=DEMO.sessions; state.plans=DEMO.plans; state.assignments=DEMO.assignments;
     state.notices=DEMO.notices; state.requests=DEMO.requests; state.settings=DEMO.settings;
+    state.invitations=state.invitations||[];
     return;
   }
   const role=state.role;
@@ -204,6 +266,15 @@ async function refreshData(){
     state.requests=reqQ.data||[];
     const setQ=await state.client.from('program_settings').select('*').eq('id',1).maybeSingle();
     state.settings=setQ.data||null;
+    if(role==='admin'||role==='supervisor'){
+      const invQ=await state.client.from('supporter_invitations')
+        .select('id,invitee_name,email,status,expires_at,failed_attempts,max_attempts,created_at,redeemed_at')
+        .order('created_at',{ascending:false}).limit(100);
+      if(invQ.error) throw invQ.error;
+      state.invitations=invQ.data||[];
+    }else{
+      state.invitations=[];
+    }
   }
 }
 function subscribeRealtime(){
@@ -246,8 +317,8 @@ async function renderPage(){
     'supporter:home':pageSupporterHome,'supporter:today':pageToday,'supporter:schedule':pageSchedule,
     'supporter:students':pageStudents,'supporter:records':pageRecords,'supporter:notices':pageNotices,'supporter:my':pageMy,
     'counselor:home':pageOfficeHome,'counselor:exceptions':pageExceptions,'counselor:counseling':pageCounseling,'counselor:requests':pageRequests,'counselor:notices':pageNotices,
-    'admin:home':pageOfficeHome,'admin:settlement':pageSettlement,'admin:approvals':pageApprovals,'admin:exceptions':pageExceptions,'admin:notices':pageNotices,'admin:settings':pageSettings,
-    'supervisor:home':pageOfficeHome,'supervisor:stats':pageStats,'supervisor:exceptions':pageExceptions,'supervisor:notices':pageNotices,'supervisor:settings':pageSettings
+    'admin:home':pageOfficeHome,'admin:invites':pageInvites,'admin:settlement':pageSettlement,'admin:approvals':pageApprovals,'admin:exceptions':pageExceptions,'admin:notices':pageNotices,'admin:settings':pageSettings,
+    'supervisor:home':pageOfficeHome,'supervisor:invites':pageInvites,'supervisor:stats':pageStats,'supervisor:exceptions':pageExceptions,'supervisor:notices':pageNotices,'supervisor:settings':pageSettings
   };
   const fn=pages[key]||pages[state.role+':home'];
   p.innerHTML='<div class="empty">불러오는 중...</div>';
@@ -409,9 +480,101 @@ function officeMetrics(){
   const confirmed=approved.reduce((sum,s)=>sum+((s.assignment?.kind||'coach')==='class'?rates.class_rate:rates.coach_rate),0);
   return {completed,auto,review,approved,provisional,confirmed};
 }
+function invitationStatusBadge(status,expiresAt){
+  if(status==='pending' && expiresAt && new Date(expiresAt).getTime()<=Date.now()) return statusBadge('만료','bad');
+  if(status==='pending') return statusBadge('대기','warn');
+  if(status==='redeemed') return statusBadge('등록완료','good');
+  if(status==='locked') return statusBadge('잠김','bad');
+  if(status==='revoked') return statusBadge('폐기','neutral');
+  if(status==='expired') return statusBadge('만료','bad');
+  return statusBadge(status||'','neutral');
+}
+async function pageInvites(){
+  const last=state.lastInvite;
+  const lastHtml=last
+    ? '<div class="card full" style="margin-bottom:14px"><div class="section-title">방금 생성한 초대</div>'
+      +'<div class="notice"><b>승인번호는 지금만 확인할 수 있습니다.</b><br>카카오톡에는 초대 링크만 보내고 승인번호는 전화·대면 등 별도 경로로 알려주세요.</div>'
+      +'<div class="label">대상</div><p>'+esc(last.name)+' · '+esc(last.email)+'</p>'
+      +'<div class="label">오프라인 승인번호</div><div class="kpi" style="letter-spacing:5px">'+esc(last.approvalCode)+'</div>'
+      +'<div class="actions"><button class="btn btn-primary" onclick="copyKakaoInvite()">카카오톡 안내문 복사</button></div></div>'
+    : '';
+  const rows=state.invitations||[];
+  const list=rows.length
+    ? '<div class="list">'+rows.map(x=>'<div class="item"><div class="row between"><div><h3>'+esc(x.invitee_name)+'</h3>'
+      +'<div class="meta">'+esc(x.email)+' · 만료 '+esc(new Date(x.expires_at).toLocaleString('ko-KR'))+'</div>'
+      +'<div class="tiny">실패 '+esc(x.failed_attempts)+'/'+esc(x.max_attempts)+'</div></div>'+invitationStatusBadge(x.status,x.expires_at)+'</div>'
+      +(x.status==='pending'?'<div class="actions"><button class="btn btn-danger" onclick="revokeInvitation(\''+x.id+'\')">초대 폐기</button></div>':'')+'</div>').join('')+'</div>'
+    : '<div class="empty">생성된 초대가 없습니다.</div>';
+  return '<div class="section-title">학습지원단 초대</div>'
+    +'<div class="notice">초대 링크는 카카오톡으로 전달하고, 6자리 승인번호는 별도 오프라인 경로로 안내합니다. 기본 유효시간은 48시간입니다.</div>'
+    +'<div class="card full"><div class="field"><label>성명</label><input id="invite-name" placeholder="예: 김지원"></div>'
+    +'<div class="field"><label>로그인 이메일</label><input id="invite-email" type="email" placeholder="example@korea.kr"></div>'
+    +'<div class="field"><label>유효시간</label><select id="invite-hours"><option value="24">24시간</option><option value="48" selected>48시간</option><option value="72">72시간</option></select></div>'
+    +'<button class="btn btn-primary" onclick="createInvitation()">초대 생성</button></div>'
+    +lastHtml+'<div class="section-title" style="margin-top:18px">초대 현황</div>'+list;
+}
+async function createInvitation(){
+  const name=document.getElementById('invite-name').value.trim();
+  const email=document.getElementById('invite-email').value.trim();
+  const hours=Number(document.getElementById('invite-hours').value||48);
+  if(!name||!email){toast('성명과 이메일을 입력해 주세요.');return;}
+  if(state.demo){
+    const token='0123456789abcdef0123456789abcdef0123456789abcdef';
+    state.lastInvite={
+      id:'demo-invite',name,email,
+      approvalCode:'482731',
+      inviteUrl:location.origin+location.pathname+'?invite='+token,
+      expiresAt:new Date(Date.now()+hours*3600000).toISOString()
+    };
+    state.invitations=[{
+      id:'demo-invite',invitee_name:name,email,status:'pending',
+      expires_at:state.lastInvite.expiresAt,failed_attempts:0,max_attempts:5
+    }];
+    renderPage();toast('초대가 생성되었습니다. (데모)');return;
+  }
+  const {data,error}=await state.client.rpc('create_supporter_invitation',{
+    p_name:name,p_email:email,p_expires_hours:hours
+  });
+  if(error){toast(error.message);return;}
+  const row=Array.isArray(data)?data[0]:data;
+  if(!row){toast('초대를 생성하지 못했습니다.');return;}
+  const base=location.origin+location.pathname;
+  state.lastInvite={
+    id:row.invitation_id,name,email,
+    approvalCode:row.approval_code,
+    inviteUrl:base+'?invite='+encodeURIComponent(row.invite_token),
+    expiresAt:row.expires_at
+  };
+  await refreshData();
+  renderPage();
+  toast('초대가 생성되었습니다.');
+}
+async function copyKakaoInvite(){
+  const x=state.lastInvite;
+  if(!x) return;
+  const text='[제천교육지원청 학습지원단 등록 안내]\n'+x.name+' 선생님, 아래 링크로 접속해 등록해 주세요.\n'+x.inviteUrl+'\n\n승인번호는 보안을 위해 카카오톡으로 전달하지 않습니다. 별도로 안내받은 번호를 입력해 주세요.';
+  try{await navigator.clipboard.writeText(text);toast('카카오톡 안내문을 복사했습니다.');}
+  catch(e){prompt('아래 내용을 복사해 카카오톡으로 보내세요.',text);}
+}
+async function revokeInvitation(id){
+  if(!confirm('이 초대를 폐기하시겠습니까?')) return;
+  if(state.demo){
+    state.invitations=(state.invitations||[]).map(x=>x.id===id?{...x,status:'revoked'}:x);
+    if(state.lastInvite?.id===id) state.lastInvite=null;
+    renderPage();toast('초대를 폐기했습니다. (데모)');return;
+  }
+  const {error}=await state.client.from('supporter_invitations')
+    .update({status:'revoked'}).eq('id',id).eq('status','pending');
+  if(error){toast(error.message);return;}
+  if(state.lastInvite?.id===id) state.lastInvite=null;
+  await refreshData();renderPage();toast('초대를 폐기했습니다.');
+}
+
 async function pageOfficeHome(){
   const m=officeMetrics();
-  return '<section class="hero"><h1>'+ROLE_LABEL[state.role]+' 대시보드</h1><p>정상 활동은 자동검증하고 예외만 사람이 확인합니다.</p></section><div class="grid">'
+  const inviteAction=(state.role==='admin'||state.role==='supervisor')
+    ? '<div class="actions"><button class="btn btn-primary" onclick="go(\'invites\')">학습지원단 초대</button></div>' : '';
+  return '<section class="hero"><h1>'+ROLE_LABEL[state.role]+' 대시보드</h1><p>정상 활동은 자동검증하고 예외만 사람이 확인합니다.</p>'+inviteAction+'</section><div class="grid">'
     +'<div class="card"><div class="label">이번 달 완료</div><div class="kpi">'+m.completed.length+'회</div></div>'
     +'<div class="card"><div class="label">자동검증</div><div class="kpi">'+m.auto.length+'회</div></div>'
     +'<div class="card"><div class="label">확인 필요</div><div class="kpi">'+m.review.length+'회</div></div>'
@@ -686,7 +849,8 @@ async function approveAll(){
   await refreshData();toast('지급 승인이 완료되었습니다.');renderPage();
 }
 
-window.signIn=signIn; window.signOut=signOut; window.switchRole=switchRole; window.go=go;
+window.signIn=signIn; window.signOut=signOut; window.redeemInvite=redeemInvite; window.switchRole=switchRole; window.go=go;
+window.createInvitation=createInvitation; window.copyKakaoInvite=copyKakaoInvite; window.revokeInvitation=revokeInvitation;
 window.startLesson=startLesson; window.endLesson=endLesson; window.saveLessonRecord=saveLessonRecord; window.setSchoolCurrentLocation=setSchoolCurrentLocation; window.uploadMyIdPhoto=uploadMyIdPhoto;
 window.addCounseling=addCounseling; window.requestScheduleChange=requestScheduleChange;
 window.reverifySession=reverifySession; window.confirmSession=confirmSession; window.rejectSession=rejectSession; window.approveSession=approveSession; window.approveAll=approveAll;
