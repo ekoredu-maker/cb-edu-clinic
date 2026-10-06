@@ -1796,3 +1796,286 @@ grant execute on function public.match_supporter_student(uuid,uuid,text,date)
   to authenticated;
 grant execute on function public.end_student_assignment(uuid,date)
   to authenticated;
+
+
+-- ---------- V14 schedule management ----------
+alter table public.schedule_plans
+  drop constraint if exists schedule_plans_mode_exactly_one_check;
+
+alter table public.schedule_plans
+  add constraint schedule_plans_mode_exactly_one_check
+  check ((specific_date is null) <> (weekday is null));
+
+create or replace function public.enforce_schedule_plan_integrity()
+returns trigger
+language plpgsql
+security invoker
+set search_path = public, private, pg_temp
+as $$
+declare
+  v_assignment public.assignments;
+  v_conflict record;
+  v_effective_from date;
+  v_effective_to date;
+begin
+  if tg_op='UPDATE' and old.active=true and new.active=false then
+    return new;
+  end if;
+
+  if not new.active then
+    return new;
+  end if;
+
+  select * into v_assignment
+  from public.assignments
+  where id=new.assignment_id;
+
+  if v_assignment.id is null or v_assignment.status <> 'active' then
+    raise exception '활성 배정에만 시간표를 만들 수 있습니다.';
+  end if;
+
+  if new.school_id is null or not exists (
+    select 1 from public.schools
+    where id=new.school_id and active=true
+  ) then
+    raise exception '활성 학교를 선택해 주세요.';
+  end if;
+
+  if nullif(btrim(coalesce(new.place,'')),'') is null then
+    raise exception '수업 장소를 입력해 주세요.';
+  end if;
+
+  if new.planned_end <= new.planned_start then
+    raise exception '종료시간은 시작시간보다 늦어야 합니다.';
+  end if;
+
+  if (new.specific_date is null) = (new.weekday is null) then
+    raise exception '특정일 또는 반복 요일 중 하나만 지정해야 합니다.';
+  end if;
+
+  if new.specific_date is not null then
+    new.effective_from := new.specific_date;
+    new.effective_to := new.specific_date;
+
+    if v_assignment.started_on is not null
+       and new.specific_date < v_assignment.started_on then
+      raise exception '특정일은 배정 시작일보다 빠를 수 없습니다.';
+    end if;
+  else
+    if new.weekday < 1 or new.weekday > 7 then
+      raise exception '요일 값이 올바르지 않습니다.';
+    end if;
+    if new.effective_from is null or new.effective_to is null then
+      raise exception '반복 시간표는 적용 시작일과 종료일이 필요합니다.';
+    end if;
+    if new.effective_to < new.effective_from then
+      raise exception '적용 종료일은 시작일보다 빠를 수 없습니다.';
+    end if;
+    if v_assignment.started_on is not null
+       and new.effective_from < v_assignment.started_on then
+      raise exception '적용 시작일은 배정 시작일보다 빠를 수 없습니다.';
+    end if;
+  end if;
+
+  v_effective_from := coalesce(new.specific_date,new.effective_from);
+  v_effective_to := coalesce(new.specific_date,new.effective_to);
+
+  select
+    sp.id,
+    sp.planned_start,
+    sp.planned_end,
+    sp.specific_date,
+    sp.weekday,
+    a.supporter_id,
+    a.student_id,
+    (a.supporter_id=v_assignment.supporter_id) as supporter_conflict,
+    (a.student_id=v_assignment.student_id) as student_conflict
+  into v_conflict
+  from public.schedule_plans sp
+  join public.assignments a on a.id=sp.assignment_id
+  where sp.active=true
+    and a.status='active'
+    and (tg_op='INSERT' or sp.id<>new.id)
+    and (a.supporter_id=v_assignment.supporter_id
+         or a.student_id=v_assignment.student_id)
+    and sp.planned_start < new.planned_end
+    and sp.planned_end > new.planned_start
+    and (
+      (
+        new.specific_date is not null
+        and (
+          sp.specific_date=new.specific_date
+          or (
+            sp.specific_date is null
+            and sp.weekday=extract(isodow from new.specific_date)::int
+            and new.specific_date between sp.effective_from and sp.effective_to
+          )
+        )
+      )
+      or
+      (
+        new.specific_date is null
+        and (
+          (
+            sp.specific_date is not null
+            and extract(isodow from sp.specific_date)::int=new.weekday
+            and sp.specific_date between v_effective_from and v_effective_to
+          )
+          or
+          (
+            sp.specific_date is null
+            and sp.weekday=new.weekday
+            and daterange(sp.effective_from,sp.effective_to,'[]')
+                && daterange(v_effective_from,v_effective_to,'[]')
+          )
+        )
+      )
+    )
+  order by sp.created_at
+  limit 1;
+
+  if v_conflict.id is not null then
+    if v_conflict.supporter_conflict and v_conflict.student_conflict then
+      raise exception '시간표 충돌: 같은 지원단원과 학생의 기존 일정이 겹칩니다. (%~%)',
+        left(v_conflict.planned_start::text,5),
+        left(v_conflict.planned_end::text,5);
+    elsif v_conflict.supporter_conflict then
+      raise exception '시간표 충돌: 지원단원의 기존 일정이 겹칩니다. (%~%)',
+        left(v_conflict.planned_start::text,5),
+        left(v_conflict.planned_end::text,5);
+    else
+      raise exception '시간표 충돌: 학생의 기존 일정이 겹칩니다. (%~%)',
+        left(v_conflict.planned_start::text,5),
+        left(v_conflict.planned_end::text,5);
+    end if;
+  end if;
+
+  return new;
+end;
+$$;
+
+drop trigger if exists trg_schedule_plan_integrity on public.schedule_plans;
+create trigger trg_schedule_plan_integrity
+before insert or update of assignment_id,school_id,specific_date,weekday,
+  planned_start,planned_end,place,effective_from,effective_to,active
+on public.schedule_plans
+for each row
+execute function public.enforce_schedule_plan_integrity();
+
+create or replace function public.create_schedule_plan_checked(
+  p_assignment_id uuid,
+  p_mode text,
+  p_planned_start time,
+  p_planned_end time,
+  p_place text,
+  p_school_id uuid,
+  p_weekday smallint default null,
+  p_specific_date date default null,
+  p_effective_from date default null,
+  p_effective_to date default null
+)
+returns jsonb
+language plpgsql
+security invoker
+set search_path = public, private, pg_temp
+as $$
+declare
+  v_actor uuid := (select auth.uid());
+  v_id uuid;
+begin
+  if v_actor is null then
+    raise exception '로그인이 필요합니다.';
+  end if;
+  if not private.is_office_user() then
+    raise exception '시간표 생성 권한이 없습니다.';
+  end if;
+  if p_mode not in ('recurring','specific') then
+    raise exception '시간표 유형이 올바르지 않습니다.';
+  end if;
+
+  if p_mode='specific' then
+    if p_specific_date is null then
+      raise exception '특정일을 선택해 주세요.';
+    end if;
+    insert into public.schedule_plans(
+      assignment_id,school_id,specific_date,weekday,
+      planned_start,planned_end,place,effective_from,effective_to,active
+    )
+    values(
+      p_assignment_id,p_school_id,p_specific_date,null,
+      p_planned_start,p_planned_end,btrim(p_place),
+      p_specific_date,p_specific_date,true
+    )
+    returning id into v_id;
+  else
+    if p_weekday is null or p_effective_from is null or p_effective_to is null then
+      raise exception '반복 요일과 적용기간을 입력해 주세요.';
+    end if;
+    insert into public.schedule_plans(
+      assignment_id,school_id,specific_date,weekday,
+      planned_start,planned_end,place,effective_from,effective_to,active
+    )
+    values(
+      p_assignment_id,p_school_id,null,p_weekday,
+      p_planned_start,p_planned_end,btrim(p_place),
+      p_effective_from,p_effective_to,true
+    )
+    returning id into v_id;
+  end if;
+
+  return jsonb_build_object('ok',true,'schedule_plan_id',v_id);
+end;
+$$;
+
+create or replace function public.deactivate_schedule_plan(
+  p_schedule_plan_id uuid
+)
+returns jsonb
+language plpgsql
+security invoker
+set search_path = public, private, pg_temp
+as $$
+declare
+  v_actor uuid := (select auth.uid());
+begin
+  if v_actor is null then
+    raise exception '로그인이 필요합니다.';
+  end if;
+  if not private.is_office_user() then
+    raise exception '시간표 관리 권한이 없습니다.';
+  end if;
+
+  if not exists (
+    select 1 from public.schedule_plans
+    where id=p_schedule_plan_id
+  ) then
+    raise exception '시간표를 찾을 수 없습니다.';
+  end if;
+
+  if exists (
+    select 1 from public.sessions
+    where schedule_plan_id=p_schedule_plan_id
+      and session_status='in_progress'
+  ) then
+    raise exception '현재 진행 중인 수업이 있어 시간표를 비활성화할 수 없습니다.';
+  end if;
+
+  update public.schedule_plans
+  set active=false,updated_at=now()
+  where id=p_schedule_plan_id and active=true;
+
+  return jsonb_build_object('ok',true,'schedule_plan_id',p_schedule_plan_id);
+end;
+$$;
+
+revoke all on function public.create_schedule_plan_checked(
+  uuid,text,time,time,text,uuid,smallint,date,date,date
+) from public, anon;
+revoke all on function public.deactivate_schedule_plan(uuid)
+  from public, anon;
+
+grant execute on function public.create_schedule_plan_checked(
+  uuid,text,time,time,text,uuid,smallint,date,date,date
+) to authenticated;
+grant execute on function public.deactivate_schedule_plan(uuid)
+  to authenticated;
