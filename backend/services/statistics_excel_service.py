@@ -208,7 +208,7 @@ def _metric_block(ws, counts: dict[str, Any], row: int) -> int:
     metrics = [
         ("등록 학생", counts.get("students", 0), "명"),
         ("활동 지원단", counts.get("staff", 0), "명"),
-        ("전체 매칭", counts.get("matchings", 0), "건"),
+        ("활성 매칭", counts.get("matchings", 0), "건"),
         ("실제 학습코칭", counts.get("actualCoachStudents", 0), "명"),
         ("실제 수업협력", counts.get("actualClassMatchings", 0), "학급"),
     ]
