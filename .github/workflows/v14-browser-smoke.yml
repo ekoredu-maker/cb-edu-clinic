@@ -94,12 +94,17 @@ jobs:
           }
 
           async function checkMobileId(browser, name, viewport) {
-            const context = await browser.newContext({ viewport });
+            const context = await browser.newContext({ viewport, serviceWorkers: 'block' });
             await context.addInitScript(() => {
               window.APP_CONFIG = { demoMode: true };
               localStorage.setItem('clinic-demo-role', 'supporter');
             });
             const page = await context.newPage();
+            await page.route('https://cdn.jsdelivr.net/**', route => route.fulfill({
+              status: 200,
+              contentType: 'application/javascript',
+              body: 'window.supabase = window.supabase || {};'
+            }));
             const pageErrors = [];
             page.on('pageerror', err => pageErrors.push(String(err)));
 
@@ -144,6 +149,76 @@ jobs:
             await context.close();
           }
 
+          async function checkInviteFlow(browser, name, viewport) {
+            const context = await browser.newContext({ viewport, serviceWorkers: 'block' });
+            await context.addInitScript(() => {
+              window.APP_CONFIG = { demoMode: true };
+              localStorage.setItem('clinic-demo-role', 'admin');
+            });
+            const page = await context.newPage();
+            await page.route('https://cdn.jsdelivr.net/**', route => route.fulfill({
+              status: 200,
+              contentType: 'application/javascript',
+              body: 'window.supabase = window.supabase || {};'
+            }));
+            const pageErrors = [];
+            page.on('pageerror', err => pageErrors.push(String(err)));
+
+            let response = await page.goto(
+              'http://127.0.0.1:4173/realtime-app/?invite-admin-smoke=1',
+              { waitUntil: 'domcontentloaded', timeout: 30000 }
+            );
+            if (!response || !response.ok()) {
+              throw new Error(name + ': invite admin page HTTP response failed');
+            }
+
+            const inviteButton = page.getByRole('button', { name: '학습지원단 초대' });
+            await inviteButton.waitFor({ state: 'visible', timeout: 10000 });
+            await inviteButton.click();
+
+            await page.getByText('학습지원단 초대', { exact: true }).waitFor({ state: 'visible', timeout: 5000 });
+            await page.locator('#invite-name').fill('김초대');
+            await page.locator('#invite-email').fill('invite@example.kr');
+            await page.getByRole('button', { name: '초대 생성' }).click();
+
+            await page.getByText('방금 생성한 초대', { exact: true }).waitFor({ state: 'visible', timeout: 5000 });
+            await page.getByText('482731', { exact: true }).waitFor({ state: 'visible', timeout: 5000 });
+            await page.getByRole('button', { name: '카카오톡 안내문 복사' }).waitFor({ state: 'visible', timeout: 5000 });
+
+            await page.screenshot({
+              path: '/tmp/v14-invite-admin-' + name + '.png',
+              fullPage: true
+            });
+
+            const token='0123456789abcdef0123456789abcdef0123456789abcdef';
+            response = await page.goto(
+              'http://127.0.0.1:4173/realtime-app/?invite=' + token,
+              { waitUntil: 'domcontentloaded', timeout: 30000 }
+            );
+            if (!response || !response.ok()) {
+              throw new Error(name + ': invite registration page HTTP response failed');
+            }
+
+            await page.getByText('학습지원단 등록', { exact: true }).waitFor({ state: 'visible', timeout: 5000 });
+            await page.getByText('승인번호는 카카오톡 초대문에 포함되지 않습니다.', { exact: false }).waitFor({ state: 'visible', timeout: 5000 });
+            await page.locator('#invite-code').fill('482731');
+            await page.locator('#invite-password').fill('TestPassword!23');
+            await page.locator('#invite-password2').fill('TestPassword!23');
+            await page.getByRole('button', { name: '등록 완료' }).click();
+            await page.getByText('등록 화면 검증이 완료되었습니다. (데모)', { exact: true }).waitFor({ state: 'visible', timeout: 5000 });
+
+            await page.screenshot({
+              path: '/tmp/v14-invite-register-' + name + '.png',
+              fullPage: true
+            });
+
+            if (pageErrors.length) {
+              throw new Error(name + ': invite flow page errors: ' + pageErrors.join(' | '));
+            }
+
+            await context.close();
+          }
+
           (async () => {
             const browser = await chromium.launch({ headless: true });
             try {
@@ -151,7 +226,9 @@ jobs:
               await check(browser, 'mobile', { width: 390, height: 844 });
               await checkMobileId(browser, 'desktop', { width: 1440, height: 900 });
               await checkMobileId(browser, 'mobile', { width: 390, height: 844 });
-              console.log('V14 login, mobile ID, and photo self-registration smoke passed on desktop and mobile.');
+              await checkInviteFlow(browser, 'desktop', { width: 1440, height: 900 });
+              await checkInviteFlow(browser, 'mobile', { width: 390, height: 844 });
+              console.log('V14 login, mobile ID, photo, and Kakao invite smoke passed on desktop and mobile.');
             } finally {
               await browser.close();
             }
@@ -169,4 +246,6 @@ jobs:
           path: |
             /tmp/v14-smoke-*.png
             /tmp/v14-mobile-id-*.png
+            /tmp/v14-invite-admin-*.png
+            /tmp/v14-invite-register-*.png
           if-no-files-found: ignore

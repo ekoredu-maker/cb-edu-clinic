@@ -1314,6 +1314,8 @@ declare
   v_code text;
   v_id uuid;
   v_expires timestamptz;
+  v_code_bytes bytea;
+  v_code_num bigint;
 begin
   if (select auth.uid()) is null then
     raise exception '로그인이 필요합니다.';
@@ -1337,7 +1339,13 @@ begin
     and status='pending';
 
   v_token := encode(extensions.gen_random_bytes(24),'hex');
-  v_code := lpad((floor(random()*1000000))::integer::text,6,'0');
+  v_code_bytes := extensions.gen_random_bytes(4);
+  v_code_num :=
+      get_byte(v_code_bytes,0)::bigint * 16777216
+    + get_byte(v_code_bytes,1)::bigint * 65536
+    + get_byte(v_code_bytes,2)::bigint * 256
+    + get_byte(v_code_bytes,3)::bigint;
+  v_code := lpad((v_code_num % 1000000)::text,6,'0');
   v_expires := now() + make_interval(hours => p_expires_hours);
 
   insert into public.supporter_invitations(
