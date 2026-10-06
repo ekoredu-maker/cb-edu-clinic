@@ -21,6 +21,9 @@ const state = {
   bulkInviteResults: [],
   studentRosterPreview: null,
   studentImportResult: null,
+  matchingSupporters: [],
+  matchingStudents: [],
+  matchingAssignments: [],
   settings: null,
   realtime: null,
   demoPhotoUrl: null
@@ -241,6 +244,33 @@ async function refreshData(){
     state.sessions=DEMO.sessions; state.plans=DEMO.plans; state.assignments=DEMO.assignments;
     state.notices=DEMO.notices; state.requests=DEMO.requests; state.settings=DEMO.settings;
     state.invitations=state.invitations||[];
+    if(!DEMO.matchingSupporters){
+      DEMO.matchingSupporters=[
+        {id:'demo-user',display_name:'김지원',roles:['supporter'],active:true,identity_verified:true},
+        {id:'demo-supporter-2',display_name:'이지원',roles:['supporter'],active:true,identity_verified:true}
+      ];
+      DEMO.matchingStudents=[
+        ...DEMO.assignments.map(a=>({...a.student,preferred_support_type:'coach',active:true})),
+        {id:'s4',full_name:'윤하늘',alias:'하늘',grade:4,class_no:1,preferred_support_type:'coach',active:true,school:{id:'demo-school-4',name:'V14 테스트학교'}},
+        {id:'s5',full_name:'정다온',alias:'다온',grade:5,class_no:2,preferred_support_type:'class',active:true,school:{id:'demo-school-5',name:'V14 테스트학교'}},
+        {id:'s6',full_name:'한별',alias:'별',grade:3,class_no:1,preferred_support_type:'counseling',active:true,school:{id:'demo-school-6',name:'V14 테스트학교'}}
+      ];
+      DEMO.matchingAssignments=DEMO.assignments.map((a,i)=>({
+        id:a.id,
+        legacy_matching_id:'JCEC-MAT-DEMO-0000'+(i+1),
+        supporter_id:i===1?'demo-supporter-2':'demo-user',
+        student_id:a.student.id,
+        kind:a.kind,
+        status:'active',
+        started_on:seoulDate(),
+        ended_on:null,
+        supporter:i===1?DEMO.matchingSupporters[1]:DEMO.matchingSupporters[0],
+        student:{...a.student,preferred_support_type:'coach'}
+      }));
+    }
+    state.matchingSupporters=DEMO.matchingSupporters;
+    state.matchingStudents=DEMO.matchingStudents;
+    state.matchingAssignments=DEMO.matchingAssignments;
     return;
   }
   const role=state.role;
@@ -276,8 +306,33 @@ async function refreshData(){
         .order('created_at',{ascending:false}).limit(100);
       if(invQ.error) throw invQ.error;
       state.invitations=invQ.data||[];
+
+      const supporterQ=await state.client.from('profiles')
+        .select('id,display_name,roles,active,identity_verified,mobile_id_active')
+        .eq('active',true)
+        .contains('roles',['supporter'])
+        .order('display_name',{ascending:true});
+      if(supporterQ.error) throw supporterQ.error;
+      state.matchingSupporters=supporterQ.data||[];
+
+      const studentQ=await state.client.from('students')
+        .select('id,full_name,alias,school_type,grade,class_no,preferred_support_type,active,school:schools(id,name)')
+        .eq('active',true)
+        .order('full_name',{ascending:true});
+      if(studentQ.error) throw studentQ.error;
+      state.matchingStudents=studentQ.data||[];
+
+      const matchingQ=await state.client.from('assignments')
+        .select('id,legacy_matching_id,supporter_id,student_id,kind,status,started_on,ended_on,supporter:profiles!assignments_supporter_id_fkey(id,display_name),student:students(id,full_name,alias,grade,class_no,preferred_support_type,school:schools(id,name))')
+        .order('created_at',{ascending:false})
+        .limit(300);
+      if(matchingQ.error) throw matchingQ.error;
+      state.matchingAssignments=matchingQ.data||[];
     }else{
       state.invitations=[];
+      state.matchingSupporters=[];
+      state.matchingStudents=[];
+      state.matchingAssignments=[];
     }
   }
 }
@@ -321,8 +376,8 @@ async function renderPage(){
     'supporter:home':pageSupporterHome,'supporter:today':pageToday,'supporter:schedule':pageSchedule,
     'supporter:students':pageStudents,'supporter:records':pageRecords,'supporter:notices':pageNotices,'supporter:my':pageMy,
     'counselor:home':pageOfficeHome,'counselor:exceptions':pageExceptions,'counselor:counseling':pageCounseling,'counselor:requests':pageRequests,'counselor:notices':pageNotices,
-    'admin:home':pageOfficeHome,'admin:invites':pageInvites,'admin:student-import':pageStudentImport,'admin:settlement':pageSettlement,'admin:approvals':pageApprovals,'admin:exceptions':pageExceptions,'admin:notices':pageNotices,'admin:settings':pageSettings,
-    'supervisor:home':pageOfficeHome,'supervisor:invites':pageInvites,'supervisor:student-import':pageStudentImport,'supervisor:stats':pageStats,'supervisor:exceptions':pageExceptions,'supervisor:notices':pageNotices,'supervisor:settings':pageSettings
+    'admin:home':pageOfficeHome,'admin:invites':pageInvites,'admin:student-import':pageStudentImport,'admin:matching':pageMatching,'admin:settlement':pageSettlement,'admin:approvals':pageApprovals,'admin:exceptions':pageExceptions,'admin:notices':pageNotices,'admin:settings':pageSettings,
+    'supervisor:home':pageOfficeHome,'supervisor:invites':pageInvites,'supervisor:student-import':pageStudentImport,'supervisor:matching':pageMatching,'supervisor:stats':pageStats,'supervisor:exceptions':pageExceptions,'supervisor:notices':pageNotices,'supervisor:settings':pageSettings
   };
   const fn=pages[key]||pages[state.role+':home'];
   p.innerHTML='<div class="empty">불러오는 중...</div>';
@@ -891,10 +946,128 @@ async function pageStudentImport(){
     +previewHtml+resultHtml;
 }
 
+function assignmentKindLabel(v){
+  return v==='class'?'수업지원':'학습코칭';
+}
+function expectedMatchingKind(student){
+  if(student?.preferred_support_type==='class') return 'class';
+  if(student?.preferred_support_type==='counseling') return null;
+  return 'coach';
+}
+function matchingLoad(supporterId){
+  return (state.matchingAssignments||[]).filter(a=>a.status==='active'&&a.supporter_id===supporterId).length;
+}
+async function pageMatching(){
+  const supporters=(state.matchingSupporters||[]).filter(x=>x.active!==false);
+  const students=(state.matchingStudents||[]).filter(x=>x.active!==false);
+  const assignments=state.matchingAssignments||[];
+  const active=assignments.filter(x=>x.status==='active');
+  const eligible=students.filter(s=>s.preferred_support_type!=='counseling');
+  const counselingCount=students.length-eligible.length;
+  const unassigned=eligible.filter(s=>{
+    const kind=expectedMatchingKind(s);
+    return !active.some(a=>a.student_id===s.id&&a.kind===kind);
+  });
+
+  const supporterOptions=supporters.map(s=>'<option value="'+esc(s.id)+'">'+esc(s.display_name)+' · 현재 '+matchingLoad(s.id)+'명'+(s.identity_verified?'':' · 본인확인 대기')+'</option>').join('');
+  const studentOptions=eligible.map(s=>{
+    const pref=expectedMatchingKind(s)||'coach';
+    const assigned=active.find(a=>a.student_id===s.id&&a.kind===pref);
+    const label=(s.school?.name||'학교 미지정')+' · '+(s.grade||'-')+'학년 '+(s.class_no||'-')+'반 · '+(s.alias||s.full_name)+' · 희망 '+assignmentKindLabel(pref)+(assigned?' · 배정됨':'');
+    return '<option value="'+esc(s.id)+'" data-kind="'+pref+'" '+(assigned?'disabled':'')+'>'+esc(label)+'</option>';
+  }).join('');
+
+  const activeHtml=active.length
+    ? '<div class="list">'+active.map(a=>'<div class="item"><div class="row between"><div><h3>'+esc(a.student?.alias||a.student?.full_name||'학생')+' · '+esc(a.supporter?.display_name||'지원단')+'</h3>'
+      +'<div class="meta">'+esc(a.student?.school?.name||'학교')+' · '+assignmentKindLabel(a.kind)+' · 시작 '+esc(a.started_on||'')+'</div>'
+      +'<div class="tiny">'+esc(a.legacy_matching_id||'')+'</div></div>'+statusBadge('활성','good')+'</div>'
+      +'<div class="actions"><button class="btn btn-danger" onclick="endStudentMatch(\''+a.id+'\')">배정 종료</button></div></div>').join('')+'</div>'
+    : '<div class="empty">활성 배정이 없습니다.</div>';
+
+  const history=assignments.filter(x=>x.status!=='active').slice(0,20);
+  const historyHtml=history.length
+    ? '<div class="list">'+history.map(a=>'<div class="item"><div class="row between"><div><h3>'+esc(a.student?.alias||a.student?.full_name||'학생')+' · '+esc(a.supporter?.display_name||'지원단')+'</h3>'
+      +'<div class="meta">'+assignmentKindLabel(a.kind)+' · '+esc(a.started_on||'')+'~'+esc(a.ended_on||'')+'</div></div>'+statusBadge('종료','neutral')+'</div></div>').join('')+'</div>'
+    : '<div class="empty">종료된 배정 이력이 없습니다.</div>';
+
+  return '<div class="section-title">학습지원단 ↔ 학생 매칭</div>'
+    +'<div class="notice">같은 학생에게 같은 지원유형의 활성 배정은 1건만 허용합니다. 학습상담 희망 학생은 상담사 관리에서 별도로 배정합니다.</div>'
+    +'<div class="grid"><div class="card"><div class="label">활성 지원단</div><div class="kpi">'+supporters.length+'명</div></div>'
+    +'<div class="card"><div class="label">활성 배정</div><div class="kpi">'+active.length+'건</div></div>'
+    +'<div class="card"><div class="label">미배정 학생</div><div class="kpi">'+unassigned.length+'명</div></div>'
+    +'<div class="card"><div class="label">상담 별도관리</div><div class="kpi">'+counselingCount+'명</div></div></div>'
+    +'<div class="card full" style="margin-top:14px"><div class="section-title">새 배정</div>'
+    +'<div class="field"><label>지원단원</label><select id="matching-supporter">'+(supporterOptions||'<option value="">활성 지원단원 없음</option>')+'</select></div>'
+    +'<div class="field"><label>학생</label><select id="matching-student" onchange="syncMatchingKind()">'+(studentOptions||'<option value="">배정 가능한 학생 없음</option>')+'</select></div>'
+    +'<div class="field"><label>지원유형</label><select id="matching-kind"><option value="coach">학습코칭</option><option value="class">수업지원</option></select></div>'
+    +'<div class="field"><label>배정 시작일</label><input id="matching-started-on" type="date" max="'+seoulDate()+'" value="'+seoulDate()+'"></div>'
+    +'<button class="btn btn-good" onclick="createStudentMatch()">배정 확정</button></div>'
+    +'<div class="section-title" style="margin-top:18px">현재 배정</div>'+activeHtml
+    +'<div class="section-title" style="margin-top:18px">종료 이력</div>'+historyHtml;
+}
+function syncMatchingKind(){
+  const studentSelect=document.getElementById('matching-student');
+  const kindSelect=document.getElementById('matching-kind');
+  if(!studentSelect||!kindSelect)return;
+  const option=studentSelect.options[studentSelect.selectedIndex];
+  if(option?.dataset?.kind)kindSelect.value=option.dataset.kind;
+}
+async function createStudentMatch(){
+  const supporterId=document.getElementById('matching-supporter')?.value||'';
+  const studentId=document.getElementById('matching-student')?.value||'';
+  const kind=document.getElementById('matching-kind')?.value||'coach';
+  const startedOn=document.getElementById('matching-started-on')?.value||seoulDate();
+  if(!supporterId||!studentId){toast('지원단원과 학생을 선택해 주세요.');return;}
+  const supporter=(state.matchingSupporters||[]).find(x=>x.id===supporterId);
+  const student=(state.matchingStudents||[]).find(x=>x.id===studentId);
+  if(!confirm((supporter?.display_name||'지원단')+' 선생님에게 '+(student?.alias||student?.full_name||'학생')+' 학생을 '+assignmentKindLabel(kind)+'으로 배정하시겠습니까?'))return;
+
+  if(state.demo){
+    const duplicate=(DEMO.matchingAssignments||[]).find(a=>a.status==='active'&&a.student_id===studentId&&a.kind===kind);
+    if(duplicate){
+      toast(duplicate.supporter_id===supporterId?'이미 같은 배정이 있습니다.':'이미 다른 지원단원에게 배정된 학생입니다.');
+      return;
+    }
+    const row={
+      id:'demo-match-'+Date.now(),
+      legacy_matching_id:'JCEC-MAT-DEMO-'+String((DEMO.matchingAssignments||[]).length+1).padStart(5,'0'),
+      supporter_id:supporterId,student_id:studentId,kind,status:'active',started_on:startedOn,ended_on:null,
+      supporter,student
+    };
+    DEMO.matchingAssignments.push(row);
+    await refreshData();renderPage();toast('배정이 완료되었습니다. (데모)');return;
+  }
+
+  const {data,error}=await state.client.rpc('match_supporter_student',{
+    p_supporter_id:supporterId,
+    p_student_id:studentId,
+    p_kind:kind,
+    p_started_on:startedOn
+  });
+  if(error){toast(error.message);return;}
+  await refreshData();renderPage();
+  toast(data?.existing?'이미 등록된 동일 배정입니다.':'학생 배정이 완료되었습니다.');
+}
+async function endStudentMatch(id){
+  const assignment=(state.matchingAssignments||[]).find(x=>x.id===id);
+  if(!assignment)return;
+  if(!confirm((assignment.student?.alias||assignment.student?.full_name||'학생')+' 학생의 '+assignmentKindLabel(assignment.kind)+' 배정을 종료하시겠습니까?\n연결된 활성 시간표도 함께 비활성화됩니다.'))return;
+  if(state.demo){
+    assignment.status='ended';assignment.ended_on=seoulDate();
+    await refreshData();renderPage();toast('배정을 종료했습니다. (데모)');return;
+  }
+  const {error}=await state.client.rpc('end_student_assignment',{
+    p_assignment_id:id,
+    p_ended_on:seoulDate()
+  });
+  if(error){toast(error.message);return;}
+  await refreshData();renderPage();toast('배정을 종료했습니다.');
+}
+
 async function pageOfficeHome(){
   const m=officeMetrics();
   const officeActions=(state.role==='admin'||state.role==='supervisor')
-    ? '<div class="actions"><button class="btn btn-primary" onclick="go(\'invites\')">학습지원단 초대</button><button class="btn btn-ghost" onclick="go(\'student-import\')">학생 명부</button></div>' : '';
+    ? '<div class="actions"><button class="btn btn-primary" onclick="go(\'invites\')">학습지원단 초대</button><button class="btn btn-ghost" onclick="go(\'student-import\')">학생 명부</button><button class="btn btn-good" onclick="go(\'matching\')">매칭 관리</button></div>' : '';
   return '<section class="hero"><h1>'+ROLE_LABEL[state.role]+' 대시보드</h1><p>정상 활동은 자동검증하고 예외만 사람이 확인합니다.</p>'+officeActions+'</section><div class="grid">'
     +'<div class="card"><div class="label">이번 달 완료</div><div class="kpi">'+m.completed.length+'회</div></div>'
     +'<div class="card"><div class="label">자동검증</div><div class="kpi">'+m.auto.length+'회</div></div>'
@@ -1174,6 +1347,7 @@ window.signIn=signIn; window.signOut=signOut; window.redeemInvite=redeemInvite; 
 window.createInvitation=createInvitation; window.copyKakaoInvite=copyKakaoInvite; window.revokeInvitation=revokeInvitation;
 window.validateSupporterRoster=validateSupporterRoster; window.downloadSupporterRosterTemplate=downloadSupporterRosterTemplate; window.createBulkInvitations=createBulkInvitations; window.copyBulkKakaoInvite=copyBulkKakaoInvite;
 window.validateStudentRoster=validateStudentRoster; window.downloadStudentRosterTemplate=downloadStudentRosterTemplate; window.registerValidStudents=registerValidStudents;
+window.syncMatchingKind=syncMatchingKind; window.createStudentMatch=createStudentMatch; window.endStudentMatch=endStudentMatch;
 window.startLesson=startLesson; window.endLesson=endLesson; window.saveLessonRecord=saveLessonRecord; window.setSchoolCurrentLocation=setSchoolCurrentLocation; window.uploadMyIdPhoto=uploadMyIdPhoto;
 window.addCounseling=addCounseling; window.requestScheduleChange=requestScheduleChange;
 window.reverifySession=reverifySession; window.confirmSession=confirmSession; window.rejectSession=rejectSession; window.approveSession=approveSession; window.approveAll=approveAll;
