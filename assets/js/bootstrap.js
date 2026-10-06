@@ -8,6 +8,7 @@ import { installStorageMigrationControls } from './hybrid/storage-migration.js';
 import { installDualWrite, installDualWriteTools, compareDualWrite } from './hybrid/dual-write.js';
 import { installAuthoritativeEngine } from './hybrid/authoritative-engine.js';
 import { installReadSourceTools, chooseReadSource } from './hybrid/read-source.js';
+import { installRealtimeImport } from './hybrid/realtime-import.js';
 
 bootStoreDevtools();
 installStatisticsOverrides();
@@ -17,6 +18,7 @@ installDocumentExports();
 installStorageMigrationControls();
 installDualWriteTools();
 installReadSourceTools();
+installRealtimeImport();
 
 subscribe(({ event }) => {
   if (event.startsWith('persist:')) console.debug('[V13 store event]', event);
