@@ -13,7 +13,9 @@ function escapeHtml(v){
 
 async function refreshStatistics(){
   if (!PythonBridge.isAvailable()) return null;
-  statsCache = await EngineSource.statistics(true);
+  const asOf = document.getElementById('stat-date')?.value || '';
+  const reportType = document.getElementById('stat-type')?.value || '';
+  statsCache = await EngineSource.statistics(true, { asOf, reportType });
   window.__V13_AUTHORITATIVE_STATS__ = statsCache;
   return statsCache;
 }
