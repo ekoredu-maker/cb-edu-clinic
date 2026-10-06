@@ -120,8 +120,11 @@ jobs:
               window.loadVerify();
             });
 
-            const row=page.locator('tr').filter({hasText:'수정 전 주제'});
-            await row.getByRole('button',{name:'✏️ 수정'}).click();
+            const row=page.locator('#ver-area tr').filter({hasText:'수정 전 주제'}).first();
+            await row.waitFor({state:'visible',timeout:10000});
+            const editButton=row.locator('button').filter({hasText:'수정'});
+            await editButton.waitFor({state:'visible',timeout:10000});
+            await editButton.click();
             await page.locator('#edit-rec-time').fill('14:10~14:55');
             await page.locator('#edit-rec-place').fill('수정실');
             await page.locator('#edit-rec-topic').fill('수정 후 주제');
@@ -158,7 +161,7 @@ jobs:
 
             await page.getByRole('button',{name:'↩ 미검증으로'}).click();
             await page.getByText('미검증',{exact:true}).waitFor({state:'visible'});
-            await page.getByRole('button',{name:'✏️ 수정'}).waitFor({state:'visible'});
+            await page.locator('#ver-area button').filter({hasText:'수정'}).first().waitFor({state:'visible'});
 
             let reverted=await page.evaluate(()=>{
               const l=window.__V13_GET_BROWSER_STATE__().mat[0].logs[0];
