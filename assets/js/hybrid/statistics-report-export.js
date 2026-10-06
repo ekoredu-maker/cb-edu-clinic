@@ -28,6 +28,15 @@ let excelJsPromise = null;
 function state(){ return window.ClinicApp?.state || {}; }
 function today(){ return new Date().toISOString().slice(0,10); }
 function fmtDate(v){ return String(v || today()).replace(/-/g,'.'); }
+function periodLabel(dateStr,type){
+  const end=new Date((dateStr||today())+'T00:00:00');
+  if(Number.isNaN(end.getTime())) return `기준일: ${fmtDate(dateStr)}`;
+  let start=null;
+  if(type==='month') start=new Date(end.getFullYear(),end.getMonth(),1);
+  else if(type==='quarter') start=new Date(end.getFullYear(),Math.floor(end.getMonth()/3)*3,1);
+  const f=d=>`${d.getFullYear()}.${String(d.getMonth()+1).padStart(2,'0')}.${String(d.getDate()).padStart(2,'0')}.`;
+  return start ? `집계기간: ${f(start)} ~ ${f(end)}` : `기준일: ${fmtDate(dateStr)}`;
+}
 function regions(s){ return (s.cfg?.regions?.length ? s.cfg.regions : ['지역1','지역2']); }
 function gradeKeys(){ return [['초',1],['초',2],['초',3],['초',4],['초',5],['초',6],['중',1],['중',2],['중',3]]; }
 function totals(pivot){
@@ -116,7 +125,7 @@ function reportMetrics(s,gradePivot){ const gt=totals(gradePivot); return [['등
 function buildSummarySheet(wb,s,dateStr,type){
   const ws=wb.addWorksheet('종합보고서',{properties:{defaultRowHeight:20}}), grade=pivotByGradeV12(), region=pivotByRegionV12();
   const org=s.cfg?.org||'충북학습종합클리닉센터',base=s.cfg?.base||'거점센터',admin=s.cfg?.admin||'-';
-  titleBlock(ws,type==='quarter'?`${org} 지역거점 지원 실적`:`${org} ${base} 지원 실적`,`기준일: ${fmtDate(dateStr)}  |  작성: ${admin}`,10);
+  titleBlock(ws,type==='quarter'?`${org} 지역거점 지원 실적`:`${org} ${base} 지원 실적`,`${periodLabel(dateStr,type)}  |  작성: ${admin}`,10);
   ws.columns=[11,8,13,17,17,11,13,17,17,14].map(width=>({width}));
   let row=5; row=section(ws,row,'Ⅰ. 핵심 현황',10);
   reportMetrics(s,grade).forEach(([label,value,unit],idx)=>{const c1=idx*2+1,c2=c1+1; ws.mergeCells(row,c1,row,c2); ws.mergeCells(row+1,c1,row+1,c2); const h=ws.getCell(row,c1); h.value=label; h.fill=fill(C.light); h.font=font(8,true); h.alignment=align('center'); const v=ws.getCell(row+1,c1); v.value=`${Number(value).toLocaleString('ko-KR')}${unit}`; v.font=font(13,true,C.navy); v.alignment=align('center'); for(let r0=row;r0<=row+1;r0++) for(let c=c1;c<=c2;c++) ws.getCell(r0,c).border=border();});
