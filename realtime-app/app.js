@@ -369,19 +369,33 @@ async function pageMy(){
   const issued=p.mobile_id_issued_at?formatDateOnly(p.mobile_id_issued_at):'미발급';
   const expires=p.mobile_id_expires_on?formatDateOnly(p.mobile_id_expires_on):'운영기간 중';
   const initials=(p.display_name||'지원단').trim().slice(0,1);
+  let photoUrl='';
+  if(!state.demo && state.user?.id){
+    const signed=await state.client.storage
+      .from('supporter-id-photos')
+      .createSignedUrl(state.user.id+'/profile',600);
+    photoUrl=signed.data?.signedUrl||'';
+  }
+  const avatar=photoUrl
+    ? '<div class="id-avatar photo"><img src="'+esc(photoUrl)+'" alt="학습지원단 사진"></div>'
+    : '<div class="id-avatar">'+esc(initials)+'</div>';
   return '<div class="section-title">학습지원단 모바일 신분증</div>'
     +'<div class="idcard">'
       +'<div class="idcard-head"><div><div class="id-eyebrow">'+esc(state.settings?.org_name||'교육지원청')+'</div><div class="id-title">학습지원단</div></div>'
       +'<div class="id-state">'+statusBadge(idState.label,idState.type)+'</div></div>'
-      +'<div class="id-body"><div class="id-avatar">'+esc(initials)+'</div><div class="id-main">'
+      +'<div class="id-body">'+avatar+'<div class="id-main">'
       +'<div class="id-name">'+esc(p.display_name||'사용자')+'</div><div class="id-role">학습지원단원</div>'
       +'<div class="id-no">'+esc(p.mobile_id_no||'발급번호 대기')+'</div></div></div>'
       +'<div class="id-grid"><div><span>발급일</span><b>'+esc(issued)+'</b></div><div><span>유효</span><b>'+esc(expires)+'</b></div></div>'
       +'<div class="id-foot">제천교육지원청 학습지원단 내부 활동 확인용 · 법정 신분증이 아닙니다.</div>'
     +'</div>'
-    +'<div class="card full" style="margin-top:14px"><div class="label">본인확인</div><p>'+(p.identity_verified?'확인 완료':'확인 대기')+'</p>'
-    +'<div class="label">계정 역할</div><p>'+getRoles().map(r=>ROLE_LABEL[r]).join(', ')+'</p>'
-    +'<button class="btn btn-danger" onclick="signOut()">로그아웃</button></div>';
+    +'<div class="card full" style="margin-top:14px">'
+      +'<div class="label">신분증 사진</div><p class="muted">본인이 직접 등록·교체합니다. JPEG·PNG·WebP, 3MB 이하</p>'
+      +'<label class="btn btn-ghost" for="id-photo-input">'+(photoUrl?'사진 교체':'사진 등록')+'</label>'
+      +'<input id="id-photo-input" class="hidden" type="file" accept="image/jpeg,image/png,image/webp" capture="user" onchange="uploadMyIdPhoto(this)">'
+      +'<div class="label" style="margin-top:16px">본인확인</div><p>'+(p.identity_verified?'확인 완료':'확인 대기')+'</p>'
+      +'<div class="label">계정 역할</div><p>'+getRoles().map(r=>ROLE_LABEL[r]).join(', ')+'</p>'
+      +'<button class="btn btn-danger" onclick="signOut()">로그아웃</button></div>';
 }
 
 function officeMetrics(){
@@ -565,6 +579,40 @@ async function endLesson(sessionId){
   }catch(e){toast(e.message||String(e));}
 }
 
+async function uploadMyIdPhoto(input){
+  const file=input?.files?.[0];
+  if(!file) return;
+  const allowed=['image/jpeg','image/png','image/webp'];
+  if(!allowed.includes(file.type)){
+    toast('JPEG, PNG, WebP 사진만 등록할 수 있습니다.');
+    input.value='';
+    return;
+  }
+  if(file.size>3*1024*1024){
+    toast('사진은 3MB 이하로 등록해 주세요.');
+    input.value='';
+    return;
+  }
+  if(state.demo){
+    toast('사진 등록이 완료되었습니다. (데모)');
+    input.value='';
+    return;
+  }
+  try{
+    const path=state.user.id+'/profile';
+    const {error}=await state.client.storage
+      .from('supporter-id-photos')
+      .upload(path,file,{upsert:true,contentType:file.type,cacheControl:'0'});
+    if(error) throw error;
+    toast('모바일 신분증 사진을 등록했습니다.');
+    input.value='';
+    await renderPage();
+  }catch(e){
+    toast(e.message||String(e));
+    input.value='';
+  }
+}
+
 async function saveLessonRecord(sessionId,studentId){
   const topic=prompt('오늘의 핵심 지도내용을 입력하세요.'); if(topic===null) return;
   const content=prompt('간단한 지도 메모를 입력하세요.',''); if(content===null) return;
@@ -628,7 +676,7 @@ async function approveAll(){
 }
 
 window.signIn=signIn; window.signOut=signOut; window.switchRole=switchRole; window.go=go;
-window.startLesson=startLesson; window.endLesson=endLesson; window.saveLessonRecord=saveLessonRecord; window.setSchoolCurrentLocation=setSchoolCurrentLocation;
+window.startLesson=startLesson; window.endLesson=endLesson; window.saveLessonRecord=saveLessonRecord; window.setSchoolCurrentLocation=setSchoolCurrentLocation; window.uploadMyIdPhoto=uploadMyIdPhoto;
 window.addCounseling=addCounseling; window.requestScheduleChange=requestScheduleChange;
 window.reverifySession=reverifySession; window.confirmSession=confirmSession; window.rejectSession=rejectSession; window.approveSession=approveSession; window.approveAll=approveAll;
 
