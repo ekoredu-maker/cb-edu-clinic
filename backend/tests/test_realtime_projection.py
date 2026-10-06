@@ -28,6 +28,8 @@ def test_projection_builds_legacy_compatible_log():
         "id": "sess-1",
         "legacy_matching_id": "mat-1",
         "work_date": "2026-10-06",
+        "planned_start_at": "2026-10-06T05:00:00+00:00",
+        "planned_end_at": "2026-10-06T05:50:00+00:00",
         "start_at": "2026-10-06T05:02:00+00:00",
         "end_at": "2026-10-06T05:52:00+00:00",
         "kind": "coach",
@@ -42,6 +44,10 @@ def test_projection_builds_legacy_compatible_log():
     assert log["d"] == "2026-10-06"
     assert log["s"] == "14:02"
     assert log["e"] == "14:52"
+    assert log["plannedDate"] == "2026-10-06"
+    assert log["plannedStart"] == "14:00"
+    assert log["plannedEnd"] == "14:50"
+    assert log["plannedTime"] == "14:00~14:50"
     assert log["minutes"] == 50
     assert log["status"] == "conducted"
 
