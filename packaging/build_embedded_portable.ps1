@@ -81,10 +81,52 @@ $runCmd = @'
 setlocal
 cd /d "%~dp0"
 set "CB_CLINIC_PORTABLE=1"
+if exist "%~dp0data\startup_error.log" del /q "%~dp0data\startup_error.log"
 start "" "%~dp0runtime\pythonw.exe" "%~dp0backend\launcher.py"
+timeout /t 3 /nobreak >nul
+if exist "%~dp0data\startup_error.log" (
+  echo.
+  echo [FAIL] Window mode startup failed.
+  echo Error log: "%~dp0data\startup_error.log"
+  echo Try: 실행_브라우저모드.cmd
+  echo.
+  type "%~dp0data\startup_error.log"
+  pause
+)
 exit /b 0
 '@
 Set-Content -Path (Join-Path $stage '실행.cmd') -Value $runCmd -Encoding ASCII
+
+$browserCmd = @'
+@echo off
+setlocal
+cd /d "%~dp0"
+set "CB_CLINIC_PORTABLE=1"
+echo [Clinic V13] Starting Python engine in browser fallback mode...
+echo Keep this window open while using the program.
+"%~dp0runtime\python.exe" "%~dp0backend\launcher.py" --browser
+if errorlevel 1 (
+  echo.
+  echo [FAIL] Browser fallback mode failed.
+  echo Check: "%~dp0data\startup_error.log"
+  pause
+)
+'@
+Set-Content -Path (Join-Path $stage '실행_브라우저모드.cmd') -Value $browserCmd -Encoding ASCII
+
+$diagCmd = @'
+@echo off
+setlocal
+cd /d "%~dp0"
+set "CB_CLINIC_PORTABLE=1"
+echo [Clinic V13] Diagnostic launch...
+"%~dp0runtime\python.exe" "%~dp0backend\launcher.py"
+echo.
+echo Exit code: %errorlevel%
+echo Error log: "%~dp0data\startup_error.log"
+pause
+'@
+Set-Content -Path (Join-Path $stage '실행_진단.cmd') -Value $diagCmd -Encoding ASCII
 
 $selfCmd = @'
 @echo off
@@ -112,6 +154,12 @@ $readme = @'
 2. "실행.cmd"를 실행합니다.
 3. 별도의 Python 설치가 필요하지 않습니다.
 4. 프로그램 창이 열리면 기존 V13 기능을 그대로 사용합니다.
+5. 실행.cmd가 반응하지 않으면 실행_브라우저모드.cmd를 사용하십시오.
+6. 실행_브라우저모드.cmd도 실패하면 실행_진단.cmd를 실행하여 오류를 확인하십시오.
+
+[중요]
+- index.html을 직접 더블클릭하면 화면은 열릴 수 있지만 Python 엔진이 연결되지 않은 브라우저 단독모드입니다.
+- 정산, V14 실적 투영, SQLite, HWPX 등 하이브리드 기능은 실행.cmd 또는 실행_브라우저모드.cmd로 시작해야 합니다.
 
 [V14 실적 가져오기]
 1. V14 실시간 운영 프로그램의 행정/장학 대시보드에서 "V13 연계"를 엽니다.
@@ -133,7 +181,10 @@ $readme = @'
 [문제 발생 시]
 - 먼저 "자가진단.cmd"를 실행하십시오.
 - PASS가 나오면 Python 엔진, V14 투영, 정산, HWPX, 오프라인 자산은 정상입니다.
-- 학교/교육청 보안정책이 공식 pythonw.exe 또는 CMD 실행까지 차단하는 경우에는 EXE형 포터블 또는 기관 보안예외가 필요할 수 있습니다.
+- 실행.cmd만 실패하고 자가진단이 PASS이면 pywebview/WebView2 구간 문제일 가능성이 높습니다. 이때는 실행_브라우저모드.cmd를 사용하십시오.
+- 실행_브라우저모드.cmd는 Python 엔진을 정상 연결한 채 기본 브라우저에서 프로그램을 엽니다.
+- 그래도 실패하면 실행_진단.cmd를 실행하고 data\startup_error.log를 확인하십시오.
+- 학교/교육청 보안정책이 python.exe/pythonw.exe 실행 자체를 차단하는 경우에는 EXE형 포터블 또는 기관 보안예외가 필요할 수 있습니다.
 '@
 Set-Content -Path (Join-Path $stage '사용안내.txt') -Value $readme -Encoding UTF8
 
@@ -147,6 +198,8 @@ $required = @(
   (Join-Path $stage 'assets\vendor\chart.umd.js'),
   (Join-Path $stage 'assets\vendor\xlsx.full.min.js'),
   (Join-Path $stage '실행.cmd'),
+  (Join-Path $stage '실행_브라우저모드.cmd'),
+  (Join-Path $stage '실행_진단.cmd'),
   (Join-Path $stage '자가진단.cmd'),
   (Join-Path $stage 'portable.flag')
 )
