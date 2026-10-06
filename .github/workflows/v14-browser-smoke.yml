@@ -94,12 +94,17 @@ jobs:
           }
 
           async function checkMobileId(browser, name, viewport) {
-            const context = await browser.newContext({ viewport });
+            const context = await browser.newContext({ viewport, serviceWorkers: 'block' });
             await context.addInitScript(() => {
               window.APP_CONFIG = { demoMode: true };
               localStorage.setItem('clinic-demo-role', 'supporter');
             });
             const page = await context.newPage();
+            await page.route('https://cdn.jsdelivr.net/**', route => route.fulfill({
+              status: 200,
+              contentType: 'application/javascript',
+              body: 'window.supabase = window.supabase || {};'
+            }));
             const pageErrors = [];
             page.on('pageerror', err => pageErrors.push(String(err)));
 
@@ -145,12 +150,17 @@ jobs:
           }
 
           async function checkInviteFlow(browser, name, viewport) {
-            const context = await browser.newContext({ viewport });
+            const context = await browser.newContext({ viewport, serviceWorkers: 'block' });
             await context.addInitScript(() => {
               window.APP_CONFIG = { demoMode: true };
               localStorage.setItem('clinic-demo-role', 'admin');
             });
             const page = await context.newPage();
+            await page.route('https://cdn.jsdelivr.net/**', route => route.fulfill({
+              status: 200,
+              contentType: 'application/javascript',
+              body: 'window.supabase = window.supabase || {};'
+            }));
             const pageErrors = [];
             page.on('pageerror', err => pageErrors.push(String(err)));
 
