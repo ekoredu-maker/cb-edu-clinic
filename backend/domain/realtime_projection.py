@@ -73,6 +73,12 @@ def to_legacy_log(row: dict[str, Any]) -> dict[str, Any]:
     day = _date_text(row)
     start = _time_text(row.get("start_at"))
     end = _time_text(row.get("end_at"))
+    planned_start = _time_text(row.get("planned_start_at"))
+    planned_end = _time_text(row.get("planned_end_at"))
+    planned_day = ""
+    planned_dt = _parse_dt(row.get("planned_start_at"))
+    if planned_dt:
+        planned_day = planned_dt.strftime("%Y-%m-%d")
     topic = str(row.get("topic") or row.get("content") or "")
     content = str(row.get("content") or topic)
     kind = "class" if str(row.get("kind") or "") == "class" else "coach"
@@ -85,6 +91,10 @@ def to_legacy_log(row: dict[str, Any]) -> dict[str, Any]:
         "s": start,
         "e": end,
         "time": f"{start}~{end}" if start and end else "",
+        "plannedDate": planned_day or day,
+        "plannedStart": planned_start,
+        "plannedEnd": planned_end,
+        "plannedTime": f"{planned_start}~{planned_end}" if planned_start and planned_end else "",
         "minutes": minutes,
         "topic": topic,
         "content": content,
