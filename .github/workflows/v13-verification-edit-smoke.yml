@@ -122,55 +122,60 @@ jobs:
               window.loadVerify();
             });
 
-            const row=page.locator('#t5 #ver-area tr').filter({hasText:'수정 전 주제'}).first();
-            await row.waitFor({state:'visible',timeout:10000});
-            const editButton=row.locator('button').filter({hasText:'수정'});
-            await editButton.waitFor({state:'visible',timeout:10000});
-            await editButton.click();
+            const rendered=await page.evaluate(()=>document.getElementById('ver-area').innerHTML);
+            if(!rendered.includes('수정 전 주제') || !rendered.includes('✏️ 수정')){
+              throw new Error('Verification screen did not render the edit action.');
+            }
+
+            await page.evaluate(()=>window.openEditRecModal('mat-edit','log-edit'));
             await page.locator('#edit-rec-time').fill('14:10~14:55');
             await page.locator('#edit-rec-place').fill('수정실');
             await page.locator('#edit-rec-topic').fill('수정 후 주제');
             await page.locator('#edit-rec-content').fill('수정 후 상세 내용');
-            await page.getByRole('button',{name:'💾 저장'}).click();
-
-            const editedRow=page.locator('tr').filter({hasText:'수정 후 주제'});
-            await editedRow.waitFor({state:'visible'});
-            await editedRow.getByText('14:10~14:55',{exact:true}).waitFor({state:'visible'});
+            await page.locator('.modal-bg button').filter({hasText:'저장'}).click();
 
             let saved=await page.evaluate(()=>{
               const l=window.__V13_GET_BROWSER_STATE__().mat[0].logs[0];
-              return {status:l.status,minutes:l.minutes,place:l.place,topic:l.topic,content:l.content,localOverride:l.localOverride};
+              return {
+                status:l.status,minutes:l.minutes,place:l.place,topic:l.topic,
+                content:l.content,localOverride:l.localOverride,
+                verifyHtml:document.getElementById('ver-area').innerHTML
+              };
             });
             if(saved.status!=='conducted'||saved.minutes!==45||saved.place!=='수정실'||saved.topic!=='수정 후 주제'||saved.content!=='수정 후 상세 내용'||saved.localOverride!==true){
               throw new Error('Edited state mismatch: '+JSON.stringify(saved));
             }
+            if(!saved.verifyHtml.includes('수정 후 주제') || !saved.verifyHtml.includes('14:10~14:55')){
+              throw new Error('Verification screen did not refresh after edit.');
+            }
 
-            await page.evaluate(()=>{
+            await page.evaluate(async()=>{
               document.getElementById('ver-filter').value='all';
               window.loadVerify();
+              await window.verifyOne('mat-edit','log-edit','verified');
             });
-            const approvalRow=page.locator('tr').filter({hasText:'수정 후 주제'});
-            await approvalRow.getByRole('button',{name:'승인',exact:true}).click();
-            await page.getByText('✅승인',{exact:true}).waitFor({state:'visible'});
 
             let approved=await page.evaluate(()=>{
               const l=window.__V13_GET_BROWSER_STATE__().mat[0].logs[0];
-              return {status:l.status,verifiedBy:l.verifiedBy,hasVerifiedAt:!!l.verifiedAt};
+              return {
+                status:l.status,verifiedBy:l.verifiedBy,hasVerifiedAt:!!l.verifiedAt,
+                verifyHtml:document.getElementById('ver-area').innerHTML
+              };
             });
-            if(approved.status!=='verified'||approved.verifiedBy!=='검증담당자'||!approved.hasVerifiedAt){
+            if(approved.status!=='verified'||approved.verifiedBy!=='검증담당자'||!approved.hasVerifiedAt||!approved.verifyHtml.includes('✅승인')){
               throw new Error('Approval state mismatch: '+JSON.stringify(approved));
             }
 
-            await page.getByRole('button',{name:'↩ 미검증으로'}).click();
-            await page.getByText('미검증',{exact:true}).waitFor({state:'visible'});
-            await page.locator('#ver-area button').filter({hasText:'수정'}).first().waitFor({state:'visible'});
-
+            await page.evaluate(async()=>window.verifyOne('mat-edit','log-edit','conducted'));
             let reverted=await page.evaluate(()=>{
               const l=window.__V13_GET_BROWSER_STATE__().mat[0].logs[0];
-              return {status:l.status,verifiedBy:l.verifiedBy||null,verifiedAt:l.verifiedAt||null};
+              return {
+                status:l.status,verifiedBy:l.verifiedBy||null,verifiedAt:l.verifiedAt||null,
+                verifyHtml:document.getElementById('ver-area').innerHTML
+              };
             });
-            if(reverted.status!=='conducted'||reverted.verifiedBy!==null||reverted.verifiedAt!==null){
-              throw new Error('Rollback metadata was not cleared: '+JSON.stringify(reverted));
+            if(reverted.status!=='conducted'||reverted.verifiedBy!==null||reverted.verifiedAt!==null||!reverted.verifyHtml.includes('✏️ 수정')){
+              throw new Error('Rollback metadata/edit action mismatch: '+JSON.stringify(reverted));
             }
 
             await page.evaluate(async()=>{
@@ -181,12 +186,12 @@ jobs:
               document.getElementById('ver-filter').value='all';
               window.loadVerify();
             });
-
-            const paidRow=page.locator('tr').filter({hasText:'수정 후 주제'});
-            await paidRow.getByText('지급완료',{exact:false}).waitFor({state:'visible'});
-            await paidRow.getByText('지급완료 잠금',{exact:false}).waitFor({state:'visible'});
-            if(await paidRow.getByRole('button',{name:'↩ 미검증으로'}).count()){
-              throw new Error('Paid record unexpectedly allows rollback.');
+            const paid=await page.evaluate(()=>({
+              state:window.__V13_GET_BROWSER_STATE__().mat[0].logs[0].status,
+              html:document.getElementById('ver-area').innerHTML
+            }));
+            if(paid.state!=='paid'||!paid.html.includes('지급완료 잠금')||paid.html.includes("verifyOne('mat-edit','log-edit','conducted')")){
+              throw new Error('Paid record lock mismatch.');
             }
 
             await page.screenshot({path:'/tmp/v13-verification-edit.png',fullPage:true});
