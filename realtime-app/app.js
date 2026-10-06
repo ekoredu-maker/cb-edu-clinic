@@ -33,7 +33,11 @@ const DEMO = {
     phone: '010-0000-1234',
     roles: ['supporter','counselor','admin','supervisor'],
     identity_verified: true,
-    legacy_staff_id: 'demo-stf-01'
+    legacy_staff_id: 'demo-stf-01',
+    mobile_id_no: 'JCEC-LS-DEMO-0001',
+    mobile_id_issued_at: new Date().toISOString(),
+    mobile_id_expires_on: null,
+    mobile_id_active: true
   },
   assignments: [
     {id:'a1',kind:'coach',student:{id:'s1',full_name:'이민서',alias:'민서',grade:4,class_no:2,school:{name:'의림초등학교'}}},
@@ -270,6 +274,19 @@ function verificationLabel(v){
   if(v==='rejected') return statusBadge('반려','bad');
   return statusBadge('대기','neutral');
 }
+function formatDateOnly(v){
+  if(!v) return '';
+  const d=new Date(v);
+  if(Number.isNaN(d.getTime())) return String(v).slice(0,10);
+  return new Intl.DateTimeFormat('ko-KR',{timeZone:'Asia/Seoul',year:'numeric',month:'2-digit',day:'2-digit'}).format(d);
+}
+function mobileIdState(){
+  const p=state.profile||{};
+  if(!p.mobile_id_active) return {label:'발급 대기',type:'warn'};
+  if(!p.identity_verified) return {label:'본인확인 대기',type:'warn'};
+  if(p.mobile_id_expires_on && p.mobile_id_expires_on < seoulDate()) return {label:'유효기간 만료',type:'bad'};
+  return {label:'사용 가능',type:'good'};
+}
 
 async function pageSupporterHome(){
   const plans=todayPlans();
@@ -347,9 +364,24 @@ async function pageNotices(){
   return '<div class="section-title">교육지원청 공지</div><div class="list">'+state.notices.map(n=>'<div class="item"><h3>'+esc(n.title)+'</h3><div class="meta">'+esc(n.published_at?new Date(n.published_at).toLocaleString('ko-KR'):'')+'</div><p>'+esc(n.body)+'</p></div>').join('')+'</div>';
 }
 async function pageMy(){
-  return '<div class="section-title">내 정보</div><div class="idcard"><div class="tiny">학습지원단 모바일 신분증</div><div class="name">'+esc(state.profile.display_name)+'</div>'
-    +'<div>'+esc(state.settings?.org_name||'교육지원청')+'</div><div class="tiny" style="margin-top:12px">'+(state.profile.identity_verified?'본인확인 완료':'본인확인 대기')+'</div></div>'
-    +'<div class="card full" style="margin-top:14px"><div class="label">역할</div><p>'+getRoles().map(r=>ROLE_LABEL[r]).join(', ')+'</p><button class="btn btn-danger" onclick="signOut()">로그아웃</button></div>';
+  const p=state.profile||{};
+  const idState=mobileIdState();
+  const issued=p.mobile_id_issued_at?formatDateOnly(p.mobile_id_issued_at):'미발급';
+  const expires=p.mobile_id_expires_on?formatDateOnly(p.mobile_id_expires_on):'운영기간 중';
+  const initials=(p.display_name||'지원단').trim().slice(0,1);
+  return '<div class="section-title">학습지원단 모바일 신분증</div>'
+    +'<div class="idcard">'
+      +'<div class="idcard-head"><div><div class="id-eyebrow">'+esc(state.settings?.org_name||'교육지원청')+'</div><div class="id-title">학습지원단</div></div>'
+      +'<div class="id-state">'+statusBadge(idState.label,idState.type)+'</div></div>'
+      +'<div class="id-body"><div class="id-avatar">'+esc(initials)+'</div><div class="id-main">'
+      +'<div class="id-name">'+esc(p.display_name||'사용자')+'</div><div class="id-role">학습지원단원</div>'
+      +'<div class="id-no">'+esc(p.mobile_id_no||'발급번호 대기')+'</div></div></div>'
+      +'<div class="id-grid"><div><span>발급일</span><b>'+esc(issued)+'</b></div><div><span>유효</span><b>'+esc(expires)+'</b></div></div>'
+      +'<div class="id-foot">제천교육지원청 학습지원단 내부 활동 확인용 · 법정 신분증이 아닙니다.</div>'
+    +'</div>'
+    +'<div class="card full" style="margin-top:14px"><div class="label">본인확인</div><p>'+(p.identity_verified?'확인 완료':'확인 대기')+'</p>'
+    +'<div class="label">계정 역할</div><p>'+getRoles().map(r=>ROLE_LABEL[r]).join(', ')+'</p>'
+    +'<button class="btn btn-danger" onclick="signOut()">로그아웃</button></div>';
 }
 
 function officeMetrics(){
