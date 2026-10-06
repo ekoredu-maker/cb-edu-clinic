@@ -82,18 +82,16 @@ setlocal
 cd /d "%~dp0"
 set "CB_CLINIC_PORTABLE=1"
 if exist "%~dp0data\startup_error.log" del /q "%~dp0data\startup_error.log"
-start "" "%~dp0runtime\pythonw.exe" "%~dp0backend\launcher.py"
-timeout /t 3 /nobreak >nul
-if exist "%~dp0data\startup_error.log" (
+echo [Clinic V13] Starting Python engine...
+echo Keep this window open while using the program.
+"%~dp0runtime\python.exe" "%~dp0backend\launcher.py" --browser
+if errorlevel 1 (
   echo.
-  echo [FAIL] Window mode startup failed.
+  echo [FAIL] Program startup failed.
   echo Error log: "%~dp0data\startup_error.log"
-  echo Try: 실행_브라우저모드.cmd
-  echo.
-  type "%~dp0data\startup_error.log"
+  if exist "%~dp0data\startup_error.log" type "%~dp0data\startup_error.log"
   pause
 )
-exit /b 0
 '@
 Set-Content -Path (Join-Path $stage '실행.cmd') -Value $runCmd -Encoding ASCII
 
@@ -113,6 +111,24 @@ if errorlevel 1 (
 )
 '@
 Set-Content -Path (Join-Path $stage '실행_브라우저모드.cmd') -Value $browserCmd -Encoding ASCII
+
+$windowCmd = @'
+@echo off
+setlocal
+cd /d "%~dp0"
+set "CB_CLINIC_PORTABLE=1"
+if exist "%~dp0data\startup_error.log" del /q "%~dp0data\startup_error.log"
+start "" "%~dp0runtime\pythonw.exe" "%~dp0backend\launcher.py"
+timeout /t 3 /nobreak >nul
+if exist "%~dp0data\startup_error.log" (
+  echo.
+  echo [FAIL] Window mode startup failed.
+  echo Use the standard 실행.cmd instead.
+  type "%~dp0data\startup_error.log"
+  pause
+)
+'@
+Set-Content -Path (Join-Path $stage '실행_창모드_선택.cmd') -Value $windowCmd -Encoding ASCII
 
 $diagCmd = @'
 @echo off
@@ -153,9 +169,9 @@ $readme = @'
 1. ZIP 파일을 PC 로컬 폴더에 완전히 압축 해제합니다.
 2. "실행.cmd"를 실행합니다.
 3. 별도의 Python 설치가 필요하지 않습니다.
-4. 프로그램 창이 열리면 기존 V13 기능을 그대로 사용합니다.
-5. 실행.cmd가 반응하지 않으면 실행_브라우저모드.cmd를 사용하십시오.
-6. 실행_브라우저모드.cmd도 실패하면 실행_진단.cmd를 실행하여 오류를 확인하십시오.
+4. 명령창이 열린 뒤 기본 브라우저에서 프로그램 화면이 자동으로 열립니다.
+5. 프로그램을 사용하는 동안 실행 명령창은 닫지 마십시오.
+6. 실행이 실패하면 실행_진단.cmd를 실행하여 오류를 확인하십시오.
 
 [중요]
 - index.html을 직접 더블클릭하면 화면은 열릴 수 있지만 Python 엔진이 연결되지 않은 브라우저 단독모드입니다.
@@ -199,6 +215,7 @@ $required = @(
   (Join-Path $stage 'assets\vendor\xlsx.full.min.js'),
   (Join-Path $stage '실행.cmd'),
   (Join-Path $stage '실행_브라우저모드.cmd'),
+  (Join-Path $stage '실행_창모드_선택.cmd'),
   (Join-Path $stage '실행_진단.cmd'),
   (Join-Path $stage '자가진단.cmd'),
   (Join-Path $stage 'portable.flag')
