@@ -952,3 +952,285 @@ where s.session_status = 'completed';
 
 revoke all on public.v13_session_projection from public, anon;
 grant select on public.v13_session_projection to authenticated;
+
+
+-- ---------- V14.4 mobile ID / admin operations ----------
+alter table public.profiles
+  add column if not exists mobile_id_no text,
+  add column if not exists mobile_id_issued_at timestamptz,
+  add column if not exists mobile_id_expires_on date,
+  add column if not exists mobile_id_active boolean not null default false;
+
+create unique index if not exists profiles_mobile_id_no_uq
+  on public.profiles(mobile_id_no)
+  where mobile_id_no is not null;
+
+insert into storage.buckets(id,name,public,file_size_limit,allowed_mime_types)
+values(
+  'supporter-id-photos',
+  'supporter-id-photos',
+  false,
+  3145728,
+  array['image/jpeg','image/png','image/webp']::text[]
+)
+on conflict(id) do update
+set public=false,
+    file_size_limit=excluded.file_size_limit,
+    allowed_mime_types=excluded.allowed_mime_types;
+
+drop policy if exists supporter_id_photo_select on storage.objects;
+create policy supporter_id_photo_select
+on storage.objects
+for select
+to authenticated
+using (
+  bucket_id='supporter-id-photos'
+  and (
+    (storage.foldername(name))[1]=(select auth.uid())::text
+    or private.is_office_user()
+  )
+);
+
+drop policy if exists supporter_id_photo_insert on storage.objects;
+create policy supporter_id_photo_insert
+on storage.objects
+for insert
+to authenticated
+with check (
+  bucket_id='supporter-id-photos'
+  and (storage.foldername(name))[1]=(select auth.uid())::text
+);
+
+drop policy if exists supporter_id_photo_update on storage.objects;
+create policy supporter_id_photo_update
+on storage.objects
+for update
+to authenticated
+using (
+  bucket_id='supporter-id-photos'
+  and (storage.foldername(name))[1]=(select auth.uid())::text
+)
+with check (
+  bucket_id='supporter-id-photos'
+  and (storage.foldername(name))[1]=(select auth.uid())::text
+);
+
+drop policy if exists supporter_id_photo_delete on storage.objects;
+create policy supporter_id_photo_delete
+on storage.objects
+for delete
+to authenticated
+using (
+  bucket_id='supporter-id-photos'
+  and (storage.foldername(name))[1]=(select auth.uid())::text
+);
+
+create or replace function public.set_school_baseline_location(
+  p_school_id uuid,
+  p_latitude double precision,
+  p_longitude double precision,
+  p_accuracy_m double precision default null
+)
+returns jsonb
+language plpgsql
+security invoker
+set search_path = public, pg_temp
+as $$
+declare
+  v_uid uuid := (select auth.uid());
+  v_school public.schools;
+  v_max_accuracy integer;
+begin
+  if v_uid is null then raise exception '로그인이 필요합니다.'; end if;
+  if not private.is_office_user() then
+    raise exception '학교 기준 위치를 등록할 권한이 없습니다.';
+  end if;
+  if p_latitude not between -90 and 90 or p_longitude not between -180 and 180 then
+    raise exception '위치값이 올바르지 않습니다.';
+  end if;
+
+  select max_location_accuracy_m into v_max_accuracy
+  from public.program_settings where id=1;
+
+  if p_accuracy_m is not null and p_accuracy_m > coalesce(v_max_accuracy,150) then
+    raise exception 'GPS 정확도가 낮아 기준 위치로 저장하지 않았습니다.';
+  end if;
+
+  update public.schools
+  set latitude=p_latitude,
+      longitude=p_longitude,
+      updated_at=now()
+  where id=p_school_id
+  returning * into v_school;
+
+  if v_school.id is null then
+    raise exception '학교를 찾을 수 없거나 수정 권한이 없습니다.';
+  end if;
+
+  return jsonb_build_object(
+    'ok',true,
+    'school_id',v_school.id,
+    'registered',true,
+    'updated_at',v_school.updated_at
+  );
+end;
+$$;
+
+create or replace function public.reverify_session(p_session_id uuid)
+returns text
+language plpgsql
+security invoker
+set search_path = public, pg_temp
+as $$
+declare
+  v_uid uuid := (select auth.uid());
+  v_session public.sessions;
+  v_plan public.schedule_plans;
+  v_school public.schools;
+  v_start public.session_locations;
+  v_end public.session_locations;
+  v_radius integer;
+  v_max_accuracy integer;
+  v_before integer;
+  v_after integer;
+  v_min_ratio numeric;
+  v_start_distance double precision;
+  v_end_distance double precision;
+  v_planned_minutes numeric;
+  v_actual_minutes numeric;
+  v_result text;
+  v_reason text;
+begin
+  if v_uid is null then raise exception '로그인이 필요합니다.'; end if;
+  if not private.is_office_user() then raise exception '재검증 권한이 없습니다.'; end if;
+
+  select * into v_session from public.sessions where id=p_session_id;
+  if v_session.id is null then raise exception '수업 실적을 찾을 수 없습니다.'; end if;
+  if v_session.session_status <> 'completed'
+     or v_session.start_at is null
+     or v_session.end_at is null then
+    raise exception '완료된 수업만 재검증할 수 있습니다.';
+  end if;
+
+  select * into v_plan from public.schedule_plans where id=v_session.schedule_plan_id;
+  select * into v_school from public.schools where id=v_plan.school_id;
+  select * into v_start from public.session_locations
+    where session_id=p_session_id and point_type='start';
+  select * into v_end from public.session_locations
+    where session_id=p_session_id and point_type='end';
+
+  select
+    coalesce(v_school.radius_m, ps.default_location_radius_m),
+    ps.max_location_accuracy_m,
+    ps.start_window_before_min,
+    ps.start_window_after_min,
+    ps.min_duration_ratio
+  into v_radius, v_max_accuracy, v_before, v_after, v_min_ratio
+  from public.program_settings ps where ps.id=1;
+
+  v_start_distance := public.distance_meters(
+    v_start.latitude,v_start.longitude,v_school.latitude,v_school.longitude
+  );
+  v_end_distance := public.distance_meters(
+    v_end.latitude,v_end.longitude,v_school.latitude,v_school.longitude
+  );
+  v_planned_minutes := extract(epoch from (
+    v_session.planned_end_at-v_session.planned_start_at
+  ))/60.0;
+  v_actual_minutes := extract(epoch from (
+    v_session.end_at-v_session.start_at
+  ))/60.0;
+
+  if v_school.latitude is not null
+     and v_school.longitude is not null
+     and v_start.id is not null
+     and v_end.id is not null
+     and v_start_distance <= v_radius
+     and v_end_distance <= v_radius
+     and (v_start.accuracy_m is null or v_start.accuracy_m <= v_max_accuracy)
+     and (v_end.accuracy_m is null or v_end.accuracy_m <= v_max_accuracy)
+     and v_session.start_at >= v_session.planned_start_at - make_interval(mins=>v_before)
+     and v_session.start_at <= v_session.planned_start_at + make_interval(mins=>v_after)
+     and v_actual_minutes >= greatest(10,v_planned_minutes*v_min_ratio)
+     and v_actual_minutes <= v_planned_minutes + 120
+  then
+    v_result := 'auto_verified';
+    v_reason := '관리자 재검증: 서버시각·위치·수업시간 자동검증 통과';
+  else
+    v_result := 'review_required';
+    v_reason := concat_ws(' / ',
+      case when v_school.latitude is null or v_school.longitude is null then '학교 기준 위치 미등록' end,
+      case when v_start.id is null then '시작 위치 기록 없음' end,
+      case when v_end.id is null then '종료 위치 기록 없음' end,
+      case when v_start.id is not null and v_school.latitude is not null
+                and not coalesce(v_start_distance <= v_radius,false) then '시작 위치 확인' end,
+      case when v_end.id is not null and v_school.latitude is not null
+                and not coalesce(v_end_distance <= v_radius,false) then '종료 위치 확인' end,
+      case when v_start.accuracy_m is not null and v_start.accuracy_m > v_max_accuracy
+           then '시작 GPS 정확도 확인' end,
+      case when v_end.accuracy_m is not null and v_end.accuracy_m > v_max_accuracy
+           then '종료 GPS 정확도 확인' end,
+      case when v_session.start_at < v_session.planned_start_at - make_interval(mins=>v_before)
+             or v_session.start_at > v_session.planned_start_at + make_interval(mins=>v_after)
+           then '계획시간 대비 시작시각 확인' end,
+      case when v_actual_minutes < greatest(10,v_planned_minutes*v_min_ratio)
+             or v_actual_minutes > v_planned_minutes + 120
+           then '실제 활동시간 확인' end
+    );
+    if coalesce(v_reason,'')='' then
+      v_reason := '자동검증 조건 확인 필요';
+    end if;
+  end if;
+
+  update public.sessions
+  set verification_state=v_result,
+      verification_reason=v_reason
+  where id=p_session_id;
+
+  return v_result;
+end;
+$$;
+
+create or replace function public.approve_session_payment(p_session_id uuid)
+returns text
+language plpgsql
+security invoker
+set search_path = public, pg_temp
+as $$
+declare
+  v_uid uuid := (select auth.uid());
+  v_state text;
+begin
+  if v_uid is null then raise exception '로그인이 필요합니다.'; end if;
+  if not (private.has_role('admin') or private.has_role('supervisor')) then
+    raise exception '지급 승인 권한이 없습니다.';
+  end if;
+
+  select verification_state into v_state
+  from public.sessions where id=p_session_id;
+
+  if v_state not in ('auto_verified','confirmed') then
+    raise exception '검증 완료 실적만 지급 승인할 수 있습니다.';
+  end if;
+
+  update public.sessions
+  set settlement_state='approved'
+  where id=p_session_id;
+
+  return 'approved';
+end;
+$$;
+
+revoke all on function public.set_school_baseline_location(uuid,double precision,double precision,double precision)
+  from public, anon;
+revoke all on function public.reverify_session(uuid) from public, anon;
+revoke all on function public.approve_session_payment(uuid) from public, anon;
+
+grant execute on function public.set_school_baseline_location(uuid,double precision,double precision,double precision)
+  to authenticated;
+grant execute on function public.reverify_session(uuid) to authenticated;
+grant execute on function public.approve_session_payment(uuid) to authenticated;
+
+revoke update on public.sessions from authenticated;
+grant update (verification_state, verification_reason, settlement_state)
+  on public.sessions to authenticated;
