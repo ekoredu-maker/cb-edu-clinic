@@ -15,7 +15,7 @@ function parseDay(v){
 }
 function reportFilterFromDom(){
   return {
-    asOf: document.getElementById('stat-date')?.value || '',
+    asOf: document.getElementById('stat-date')?.value || new Date().toISOString().slice(0,10),
     reportType: document.getElementById('stat-type')?.value || ''
   };
 }
