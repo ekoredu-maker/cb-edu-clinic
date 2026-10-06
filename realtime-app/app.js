@@ -33,7 +33,11 @@ const DEMO = {
     phone: '010-0000-1234',
     roles: ['supporter','counselor','admin','supervisor'],
     identity_verified: true,
-    legacy_staff_id: 'demo-stf-01'
+    legacy_staff_id: 'demo-stf-01',
+    mobile_id_no: 'JCEC-LS-DEMO-0001',
+    mobile_id_issued_at: new Date().toISOString(),
+    mobile_id_expires_on: null,
+    mobile_id_active: true
   },
   assignments: [
     {id:'a1',kind:'coach',student:{id:'s1',full_name:'이민서',alias:'민서',grade:4,class_no:2,school:{name:'의림초등학교'}}},
@@ -270,6 +274,19 @@ function verificationLabel(v){
   if(v==='rejected') return statusBadge('반려','bad');
   return statusBadge('대기','neutral');
 }
+function formatDateOnly(v){
+  if(!v) return '';
+  const d=new Date(v);
+  if(Number.isNaN(d.getTime())) return String(v).slice(0,10);
+  return new Intl.DateTimeFormat('ko-KR',{timeZone:'Asia/Seoul',year:'numeric',month:'2-digit',day:'2-digit'}).format(d);
+}
+function mobileIdState(){
+  const p=state.profile||{};
+  if(!p.mobile_id_active) return {label:'발급 대기',type:'warn'};
+  if(!p.identity_verified) return {label:'본인확인 대기',type:'warn'};
+  if(p.mobile_id_expires_on && p.mobile_id_expires_on < seoulDate()) return {label:'유효기간 만료',type:'bad'};
+  return {label:'사용 가능',type:'good'};
+}
 
 async function pageSupporterHome(){
   const plans=todayPlans();
@@ -347,9 +364,38 @@ async function pageNotices(){
   return '<div class="section-title">교육지원청 공지</div><div class="list">'+state.notices.map(n=>'<div class="item"><h3>'+esc(n.title)+'</h3><div class="meta">'+esc(n.published_at?new Date(n.published_at).toLocaleString('ko-KR'):'')+'</div><p>'+esc(n.body)+'</p></div>').join('')+'</div>';
 }
 async function pageMy(){
-  return '<div class="section-title">내 정보</div><div class="idcard"><div class="tiny">학습지원단 모바일 신분증</div><div class="name">'+esc(state.profile.display_name)+'</div>'
-    +'<div>'+esc(state.settings?.org_name||'교육지원청')+'</div><div class="tiny" style="margin-top:12px">'+(state.profile.identity_verified?'본인확인 완료':'본인확인 대기')+'</div></div>'
-    +'<div class="card full" style="margin-top:14px"><div class="label">역할</div><p>'+getRoles().map(r=>ROLE_LABEL[r]).join(', ')+'</p><button class="btn btn-danger" onclick="signOut()">로그아웃</button></div>';
+  const p=state.profile||{};
+  const idState=mobileIdState();
+  const issued=p.mobile_id_issued_at?formatDateOnly(p.mobile_id_issued_at):'미발급';
+  const expires=p.mobile_id_expires_on?formatDateOnly(p.mobile_id_expires_on):'운영기간 중';
+  const initials=(p.display_name||'지원단').trim().slice(0,1);
+  let photoUrl='';
+  if(!state.demo && state.user?.id){
+    const signed=await state.client.storage
+      .from('supporter-id-photos')
+      .createSignedUrl(state.user.id+'/profile',600);
+    photoUrl=signed.data?.signedUrl||'';
+  }
+  const avatar=photoUrl
+    ? '<div class="id-avatar photo"><img src="'+esc(photoUrl)+'" alt="학습지원단 사진"></div>'
+    : '<div class="id-avatar">'+esc(initials)+'</div>';
+  return '<div class="section-title">학습지원단 모바일 신분증</div>'
+    +'<div class="idcard">'
+      +'<div class="idcard-head"><div><div class="id-eyebrow">'+esc(state.settings?.org_name||'교육지원청')+'</div><div class="id-title">학습지원단</div></div>'
+      +'<div class="id-state">'+statusBadge(idState.label,idState.type)+'</div></div>'
+      +'<div class="id-body">'+avatar+'<div class="id-main">'
+      +'<div class="id-name">'+esc(p.display_name||'사용자')+'</div><div class="id-role">학습지원단원</div>'
+      +'<div class="id-no">'+esc(p.mobile_id_no||'발급번호 대기')+'</div></div></div>'
+      +'<div class="id-grid"><div><span>발급일</span><b>'+esc(issued)+'</b></div><div><span>유효</span><b>'+esc(expires)+'</b></div></div>'
+      +'<div class="id-foot">제천교육지원청 학습지원단 내부 활동 확인용 · 법정 신분증이 아닙니다.</div>'
+    +'</div>'
+    +'<div class="card full" style="margin-top:14px">'
+      +'<div class="label">신분증 사진</div><p class="muted">본인이 직접 등록·교체합니다. JPEG·PNG·WebP, 3MB 이하</p>'
+      +'<label class="btn btn-ghost" for="id-photo-input">'+(photoUrl?'사진 교체':'사진 등록')+'</label>'
+      +'<input id="id-photo-input" class="hidden" type="file" accept="image/jpeg,image/png,image/webp" capture="user" onchange="uploadMyIdPhoto(this)">'
+      +'<div class="label" style="margin-top:16px">본인확인</div><p>'+(p.identity_verified?'확인 완료':'확인 대기')+'</p>'
+      +'<div class="label">계정 역할</div><p>'+getRoles().map(r=>ROLE_LABEL[r]).join(', ')+'</p>'
+      +'<button class="btn btn-danger" onclick="signOut()">로그아웃</button></div>';
 }
 
 function officeMetrics(){
@@ -488,11 +534,15 @@ async function setSchoolCurrentLocation(schoolId,schoolName){
       renderPage();
       return;
     }
-    const {error}=await state.client.from('schools')
-      .update({latitude:loc.latitude,longitude:loc.longitude})
-      .eq('id',schoolId);
+    const {data,error}=await state.client.rpc('set_school_baseline_location',{
+      p_school_id:schoolId,
+      p_latitude:loc.latitude,
+      p_longitude:loc.longitude,
+      p_accuracy_m:loc.accuracy
+    });
     if(error) throw error;
-    toast('학교 기준 위치를 등록했습니다.');
+    if(!data?.registered) throw new Error('학교 기준 위치 저장을 확인하지 못했습니다.');
+    toast('학교 기준 위치 저장을 확인했습니다.');
     renderPage();
   }catch(e){
     toast(e.message||String(e));
@@ -529,6 +579,40 @@ async function endLesson(sessionId){
   }catch(e){toast(e.message||String(e));}
 }
 
+async function uploadMyIdPhoto(input){
+  const file=input?.files?.[0];
+  if(!file) return;
+  const allowed=['image/jpeg','image/png','image/webp'];
+  if(!allowed.includes(file.type)){
+    toast('JPEG, PNG, WebP 사진만 등록할 수 있습니다.');
+    input.value='';
+    return;
+  }
+  if(file.size>3*1024*1024){
+    toast('사진은 3MB 이하로 등록해 주세요.');
+    input.value='';
+    return;
+  }
+  if(state.demo){
+    toast('사진 등록이 완료되었습니다. (데모)');
+    input.value='';
+    return;
+  }
+  try{
+    const path=state.user.id+'/profile';
+    const {error}=await state.client.storage
+      .from('supporter-id-photos')
+      .upload(path,file,{upsert:true,contentType:file.type,cacheControl:'0'});
+    if(error) throw error;
+    toast('모바일 신분증 사진을 등록했습니다.');
+    input.value='';
+    await renderPage();
+  }catch(e){
+    toast(e.message||String(e));
+    input.value='';
+  }
+}
+
 async function saveLessonRecord(sessionId,studentId){
   const topic=prompt('오늘의 핵심 지도내용을 입력하세요.'); if(topic===null) return;
   const content=prompt('간단한 지도 메모를 입력하세요.',''); if(content===null) return;
@@ -551,6 +635,18 @@ async function requestScheduleChange(planId){
   const {error}=await state.client.from('change_requests').insert({requester_id:state.user.id,assignment_id:plan?.assignment_id||null,schedule_plan_id:planId,request_type:'schedule',reason});
   if(error){toast(error.message);return;}toast('변경요청을 등록했습니다.');
 }
+async function reverifySession(id){
+  if(state.demo){
+    const s=DEMO.sessions.find(x=>x.id===id);
+    if(s){s.verification_state='auto_verified';s.verification_reason='관리자 재검증: 자동검증 통과';}
+    await refreshData();renderPage();return;
+  }
+  const {data,error}=await state.client.rpc('reverify_session',{p_session_id:id});
+  if(error){toast(error.message);return;}
+  await refreshData();
+  toast(data==='auto_verified'?'자동 재검증을 통과했습니다.':'재검증 결과 확인이 필요합니다.');
+  renderPage();
+}
 async function confirmSession(id){
   if(state.demo){const s=DEMO.sessions.find(x=>x.id===id);if(s)s.verification_state='confirmed';await refreshData();renderPage();return;}
   const {error}=await state.client.from('sessions').update({verification_state:'confirmed',verification_reason:'담당자 확인 완료'}).eq('id',id);
@@ -564,7 +660,7 @@ async function rejectSession(id){
 }
 async function approveSession(id){
   if(state.demo){const s=DEMO.sessions.find(x=>x.id===id);if(s)s.settlement_state='approved';await refreshData();renderPage();return;}
-  const {error}=await state.client.from('sessions').update({settlement_state:'approved'}).eq('id',id);
+  const {error}=await state.client.rpc('approve_session_payment',{p_session_id:id});
   if(error){toast(error.message);return;}await refreshData();renderPage();
 }
 async function approveAll(){
@@ -572,13 +668,16 @@ async function approveAll(){
   if(!ids.length)return;
   if(!confirm(ids.length+'건을 지급 승인하시겠습니까?'))return;
   if(state.demo){DEMO.sessions.forEach(s=>{if(ids.includes(s.id))s.settlement_state='approved';});await refreshData();renderPage();return;}
-  const {error}=await state.client.from('sessions').update({settlement_state:'approved'}).in('id',ids);
-  if(error){toast(error.message);return;}await refreshData();toast('지급 승인이 완료되었습니다.');renderPage();
+  for(const id of ids){
+    const {error}=await state.client.rpc('approve_session_payment',{p_session_id:id});
+    if(error){toast(error.message);return;}
+  }
+  await refreshData();toast('지급 승인이 완료되었습니다.');renderPage();
 }
 
 window.signIn=signIn; window.signOut=signOut; window.switchRole=switchRole; window.go=go;
-window.startLesson=startLesson; window.endLesson=endLesson; window.saveLessonRecord=saveLessonRecord; window.setSchoolCurrentLocation=setSchoolCurrentLocation;
+window.startLesson=startLesson; window.endLesson=endLesson; window.saveLessonRecord=saveLessonRecord; window.setSchoolCurrentLocation=setSchoolCurrentLocation; window.uploadMyIdPhoto=uploadMyIdPhoto;
 window.addCounseling=addCounseling; window.requestScheduleChange=requestScheduleChange;
-window.confirmSession=confirmSession; window.rejectSession=rejectSession; window.approveSession=approveSession; window.approveAll=approveAll;
+window.reverifySession=reverifySession; window.confirmSession=confirmSession; window.rejectSession=rejectSession; window.approveSession=approveSession; window.approveAll=approveAll;
 
 init().catch(e=>{$app.innerHTML='<div class="login"><h2>초기화 오류</h2><p>'+esc(e.message||e)+'</p></div>';});

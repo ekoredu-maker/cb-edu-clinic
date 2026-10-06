@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <meta name="theme-color" content="#3157d5">
-  <title>학습지원단 실시간 운영 V14.3</title>
+  <title>학습지원단 실시간 운영 V14.4</title>
   <link rel="manifest" href="./manifest.webmanifest">
   <style>
     :root{--bg:#f5f7fb;--card:#fff;--ink:#172033;--muted:#68758a;--line:#e6eaf1;--primary:#3157d5;--primary2:#2447bb;--good:#178451;--warn:#b56b00;--bad:#c83b3b;--shadow:0 10px 30px rgba(25,42,70,.07)}
@@ -33,14 +33,19 @@
     .login h2{margin:0 0 14px}.field{margin:10px 0}.field label{display:block;font-size:12px;color:var(--muted);margin-bottom:5px}.field input,.field textarea,.field select{width:100%;padding:12px;border:1px solid var(--line);border-radius:10px;background:#fff}.field textarea{min-height:100px;resize:vertical}
     .notice{padding:11px 13px;border-radius:12px;background:#eef2ff;color:#324ba8;font-size:13px;margin:10px 0}
     .toast{position:fixed;left:50%;transform:translateX(-50%);bottom:92px;background:#1d2738;color:#fff;padding:11px 15px;border-radius:12px;z-index:50;box-shadow:var(--shadow);font-size:13px}
-    .idcard{background:linear-gradient(145deg,#18284c,#3157d5);color:#fff;border-radius:18px;padding:20px;min-height:180px;position:relative;overflow:hidden}
-    .idcard:after{content:"";position:absolute;width:180px;height:180px;border-radius:50%;background:rgba(255,255,255,.08);right:-50px;top:-60px}.idcard .name{font-size:26px;font-weight:900;margin-top:42px}
+    .idcard{background:linear-gradient(145deg,#18284c,#3157d5);color:#fff;border-radius:22px;padding:20px;min-height:260px;position:relative;overflow:hidden;box-shadow:0 16px 40px rgba(28,51,104,.22)}
+    .idcard:after{content:"";position:absolute;width:220px;height:220px;border-radius:50%;background:rgba(255,255,255,.08);right:-70px;top:-70px}
+    .idcard-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;position:relative;z-index:1}.id-eyebrow{font-size:11px;opacity:.78}.id-title{font-size:18px;font-weight:900;margin-top:2px}
+    .id-body{display:flex;align-items:center;gap:18px;margin:24px 0 18px;position:relative;z-index:1}.id-avatar{width:92px;height:112px;border-radius:16px;background:rgba(255,255,255,.16);border:1px solid rgba(255,255,255,.35);display:flex;align-items:center;justify-content:center;font-size:34px;font-weight:900;overflow:hidden;flex:0 0 auto}
+    .id-avatar.photo{background:#fff}.id-avatar img{width:100%;height:100%;object-fit:cover}.id-main{min-width:0}.id-name{font-size:27px;font-weight:900;letter-spacing:-.4px}.id-role{font-size:13px;opacity:.84;margin-top:3px}.id-no{font-size:12px;opacity:.82;margin-top:12px;word-break:break-all}
+    .id-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;position:relative;z-index:1}.id-grid>div{background:rgba(255,255,255,.10);border-radius:12px;padding:10px 12px}.id-grid span{display:block;font-size:10px;opacity:.72}.id-grid b{display:block;font-size:12px;margin-top:3px}
+    .id-foot{font-size:10px;opacity:.68;margin-top:14px;position:relative;z-index:1}.id-state .status{background:rgba(255,255,255,.18);color:#fff}
     .muted{color:var(--muted)} .tiny{font-size:11px}.section-title{font-size:18px;font-weight:900;margin:6px 0 12px}.hidden{display:none!important}
     @media(max-width:780px){.card,.card.wide{grid-column:1/-1}.hero h1{font-size:21px}.top .brand{font-size:16px}.role-switch{max-width:125px}}
   </style>
 </head>
 <body>
-<div id="app"></div><div style="position:fixed;right:8px;bottom:76px;z-index:5;font-size:10px;color:#98a2b3">V14.3</div>
+<div id="app"></div><div style="position:fixed;right:8px;bottom:76px;z-index:5;font-size:10px;color:#98a2b3">V14.4</div>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script>
   if('serviceWorker' in navigator){
@@ -50,12 +55,12 @@
       reloading=true;
       location.reload();
     });
-    navigator.serviceWorker.register('./sw.js?v=14.3',{updateViaCache:'none'})
+    navigator.serviceWorker.register('./sw.js?v=14.4',{updateViaCache:'none'})
       .then(reg=>reg.update())
       .catch(()=>{});
   }
 </script>
-<script src="./config.js?v=14.3"></script>
-<script src="./app.js?v=14.3"></script>
+<script src="./config.js?v=14.4"></script>
+<script src="./app.js?v=14.4"></script>
 </body>
 </html>
