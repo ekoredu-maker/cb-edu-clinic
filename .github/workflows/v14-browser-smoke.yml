@@ -1,0 +1,117 @@
+name: V14 Browser Smoke
+
+on:
+  pull_request:
+    paths:
+      - 'realtime-app/**'
+      - '.github/workflows/v14-browser-smoke.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'realtime-app/**'
+      - '.github/workflows/v14-browser-smoke.yml'
+  workflow_dispatch:
+
+jobs:
+  browser-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Playwright
+        run: |
+          npm install --no-save playwright@1.56.1
+          npx playwright install --with-deps chromium
+
+      - name: Start static server
+        run: |
+          python3 -m http.server 4173 > /tmp/clinic-http.log 2>&1 &
+          echo $! > /tmp/clinic-http.pid
+          for i in {1..30}; do
+            if curl -fsS http://127.0.0.1:4173/realtime-app/ >/dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          cat /tmp/clinic-http.log
+          exit 1
+
+      - name: Run desktop and mobile browser smoke
+        run: |
+          node <<'NODE'
+          const { chromium } = require('playwright');
+          const fs = require('fs');
+
+          async function check(browser, name, viewport) {
+            const context = await browser.newContext({ viewport });
+            const page = await context.newPage();
+            const pageErrors = [];
+            page.on('pageerror', err => pageErrors.push(String(err)));
+            page.on('console', msg => {
+              if (msg.type() === 'error') console.log('[console:error]', msg.text());
+            });
+
+            const response = await page.goto(
+              'http://127.0.0.1:4173/realtime-app/?smoke=1',
+              { waitUntil: 'domcontentloaded', timeout: 30000 }
+            );
+
+            if (!response || !response.ok()) {
+              throw new Error(name + ': page HTTP response failed');
+            }
+
+            await page.waitForSelector('.login', { timeout: 15000 });
+            await page.waitForSelector('#login-email', { timeout: 5000 });
+            await page.waitForSelector('#login-password', { timeout: 5000 });
+
+            const appText = (await page.locator('#app').innerText()).trim();
+            if (!appText.includes('학습지원단 실시간 운영') || !appText.includes('로그인')) {
+              throw new Error(name + ': login UI was not rendered');
+            }
+
+            const childCount = await page.locator('#app').evaluate(el => el.childElementCount);
+            if (childCount < 1) {
+              throw new Error(name + ': #app is empty');
+            }
+
+            await page.screenshot({
+              path: '/tmp/v14-smoke-' + name + '.png',
+              fullPage: true
+            });
+
+            if (pageErrors.length) {
+              throw new Error(name + ': page errors: ' + pageErrors.join(' | '));
+            }
+
+            await context.close();
+          }
+
+          (async () => {
+            const browser = await chromium.launch({ headless: true });
+            try {
+              await check(browser, 'desktop', { width: 1440, height: 900 });
+              await check(browser, 'mobile', { width: 390, height: 844 });
+              console.log('V14 browser smoke passed on desktop and mobile.');
+            } finally {
+              await browser.close();
+            }
+          })().catch(err => {
+            console.error(err);
+            process.exit(1);
+          });
+          NODE
+
+      - name: Upload smoke screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: v14-browser-smoke
+          path: /tmp/v14-smoke-*.png
+          if-no-files-found: ignore

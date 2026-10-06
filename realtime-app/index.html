@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <meta name="theme-color" content="#3157d5">
-  <title>학습지원단 실시간 운영 V14.5.1</title>
+  <title>학습지원단 실시간 운영 V14.4</title>
   <link rel="manifest" href="./manifest.webmanifest">
   <style>
     :root{--bg:#f5f7fb;--card:#fff;--ink:#172033;--muted:#68758a;--line:#e6eaf1;--primary:#3157d5;--primary2:#2447bb;--good:#178451;--warn:#b56b00;--bad:#c83b3b;--shadow:0 10px 30px rgba(25,42,70,.07)}
@@ -45,23 +45,22 @@
   </style>
 </head>
 <body>
-<div id="app"></div><div style="position:fixed;right:8px;bottom:76px;z-index:5;font-size:10px;color:#98a2b3">V14.5.1</div>
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.2" onerror="this.onerror=null;this.src='https://unpkg.com/@supabase/supabase-js@2.117.2'"></script>
+<div id="app"></div><div style="position:fixed;right:8px;bottom:76px;z-index:5;font-size:10px;color:#98a2b3">V14.4</div>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script>
   if('serviceWorker' in navigator){
     let reloading=false;
     navigator.serviceWorker.addEventListener('controllerchange',()=>{
-      if(reloading || sessionStorage.getItem('clinic-sw-reloaded')==='14.5.1') return;
+      if(reloading) return;
       reloading=true;
-      sessionStorage.setItem('clinic-sw-reloaded','14.5.1');
       location.reload();
     });
-    navigator.serviceWorker.register('./sw.js?v=14.5.1',{updateViaCache:'none'})
+    navigator.serviceWorker.register('./sw.js?v=14.4',{updateViaCache:'none'})
       .then(reg=>reg.update())
       .catch(()=>{});
   }
 </script>
-<script src="./config.js?v=14.5.1"></script>
-<script src="./app.js?v=14.5.1"></script>
+<script src="./config.js?v=14.4"></script>
+<script src="./app.js?v=14.4"></script>
 </body>
 </html>
