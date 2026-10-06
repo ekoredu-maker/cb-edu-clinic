@@ -432,10 +432,35 @@ async function pageCounseling(){
 }
 async function pageSettings(){
   const s=state.settings||DEMO.settings;
-  return '<div class="section-title">운영 설정</div><div class="card full"><div class="field"><label>기관</label><input value="'+esc(s.org_name||'')+'" disabled></div>'
+  let schools=[];
+  if(state.demo){
+    schools=[{id:'demo-school',name:'V14 테스트학교',latitude:null,longitude:null,radius_m:null}];
+  }else{
+    const q=await state.client.from('schools')
+      .select('id,name,latitude,longitude,radius_m,active')
+      .eq('active',true)
+      .order('name',{ascending:true});
+    if(q.error) throw q.error;
+    schools=q.data||[];
+  }
+  const schoolHtml=schools.length
+    ? '<div class="list">'+schools.map(sc=>{
+        const registered=sc.latitude!==null&&sc.latitude!==undefined&&sc.longitude!==null&&sc.longitude!==undefined;
+        const status=registered?statusBadge('기준 위치 등록됨','good'):statusBadge('위치 미등록','warn');
+        const radius=sc.radius_m||s.default_location_radius_m||250;
+        return '<div class="item"><div class="row between"><div><h3>'+esc(sc.name)+'</h3><div class="meta">확인 반경 '+esc(radius)+'m · 좌표값은 화면에 표시하지 않습니다.</div></div>'+status+'</div>'
+          +'<div class="actions"><button class="btn btn-ghost" onclick="setSchoolCurrentLocation(\''+sc.id+'\',\''+esc(sc.name).replace(/&#39;/g,"\\'")+'\')">현재 위치를 기준 위치로 등록</button></div></div>';
+      }).join('')+'</div>'
+    : '<div class="empty">등록된 학교가 없습니다.</div>';
+
+  return '<div class="section-title">운영 설정</div>'
+    +'<div class="card full"><div class="field"><label>기관</label><input value="'+esc(s.org_name||'')+'" disabled></div>'
     +'<div class="field"><label>학습코칭 단가</label><input value="'+esc(s.coach_rate||0)+'" disabled></div>'
     +'<div class="field"><label>기본 위치 확인 반경(m)</label><input value="'+esc(s.default_location_radius_m||250)+'" disabled></div>'
-    +'<p class="muted">V14.0에서는 안전하게 조회만 제공합니다. 설정 변경은 다음 단계에서 감사로그와 함께 연결합니다.</p></div>';
+    +'<p class="muted">단가·반경 등 일반 설정은 아직 조회 전용입니다.</p></div>'
+    +'<div class="section-title" style="margin-top:18px">학교 기준 위치</div>'
+    +'<div class="notice">관리자가 학교 현장에서 버튼을 눌러 기준 위치를 등록합니다. 이 기능은 버튼을 누른 순간의 위치만 저장하며 상시 위치추적을 하지 않습니다.</div>'
+    +schoolHtml;
 }
 
 function getLocation(){
@@ -448,6 +473,30 @@ function getLocation(){
       {enableHighAccuracy:true,timeout:12000,maximumAge:0}
     );
   });
+}
+
+async function setSchoolCurrentLocation(schoolId,schoolName){
+  if(!confirm(schoolName+'의 기준 위치를 현재 스마트폰 위치로 등록하시겠습니까?\\n\\n이 위치는 수업 시작·종료 확인의 기준점으로만 사용합니다.')) return;
+  try{
+    const loc=await getLocation();
+    if(Number(loc.accuracy||0)>100){
+      const ok=confirm('현재 GPS 정확도가 약 '+Math.round(loc.accuracy)+'m입니다.\\n가능하면 창가나 실외에서 다시 측정하는 것을 권장합니다. 그래도 등록하시겠습니까?');
+      if(!ok) return;
+    }
+    if(state.demo){
+      toast('기준 위치가 등록되었습니다. (데모)');
+      renderPage();
+      return;
+    }
+    const {error}=await state.client.from('schools')
+      .update({latitude:loc.latitude,longitude:loc.longitude})
+      .eq('id',schoolId);
+    if(error) throw error;
+    toast('학교 기준 위치를 등록했습니다.');
+    renderPage();
+  }catch(e){
+    toast(e.message||String(e));
+  }
 }
 async function startLesson(planId){
   try{
@@ -528,7 +577,7 @@ async function approveAll(){
 }
 
 window.signIn=signIn; window.signOut=signOut; window.switchRole=switchRole; window.go=go;
-window.startLesson=startLesson; window.endLesson=endLesson; window.saveLessonRecord=saveLessonRecord;
+window.startLesson=startLesson; window.endLesson=endLesson; window.saveLessonRecord=saveLessonRecord; window.setSchoolCurrentLocation=setSchoolCurrentLocation;
 window.addCounseling=addCounseling; window.requestScheduleChange=requestScheduleChange;
 window.confirmSession=confirmSession; window.rejectSession=rejectSession; window.approveSession=approveSession; window.approveAll=approveAll;
 
