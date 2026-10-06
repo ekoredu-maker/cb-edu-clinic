@@ -17,6 +17,8 @@ const state = {
   requests: [],
   invitations: [],
   lastInvite: null,
+  rosterPreview: null,
+  bulkInviteResults: [],
   settings: null,
   realtime: null,
   demoPhotoUrl: null
@@ -480,6 +482,133 @@ function officeMetrics(){
   const confirmed=approved.reduce((sum,s)=>sum+((s.assignment?.kind||'coach')==='class'?rates.class_rate:rates.coach_rate),0);
   return {completed,auto,review,approved,provisional,confirmed};
 }
+function rosterStatusBadge(status){
+  if(status==='valid') return statusBadge('초대 가능','good');
+  if(status==='registered') return statusBadge('등록됨','neutral');
+  if(status==='pending_invite') return statusBadge('기존 초대','warn');
+  if(status==='duplicate_file') return statusBadge('파일 중복','bad');
+  return statusBadge('확인 필요','bad');
+}
+function parseSimpleCsv(text){
+  const rows=[];
+  let row=[],cell='',quoted=false;
+  for(let i=0;i<text.length;i++){
+    const ch=text[i];
+    if(ch==='"'){
+      if(quoted && text[i+1]==='"'){cell+='"';i++;}
+      else quoted=!quoted;
+    }else if(ch===',' && !quoted){
+      row.push(cell);cell='';
+    }else if((ch==='\n'||ch==='\r') && !quoted){
+      if(ch==='\r'&&text[i+1]==='\n')i++;
+      row.push(cell);cell='';
+      if(row.some(v=>String(v).trim()!==''))rows.push(row);
+      row=[];
+    }else cell+=ch;
+  }
+  row.push(cell);
+  if(row.some(v=>String(v).trim()!==''))rows.push(row);
+  return rows;
+}
+async function parseDemoSupporterRoster(file){
+  if(!file.name.toLowerCase().endsWith('.csv')){
+    throw new Error('데모 검증에서는 CSV를 사용해 주세요.');
+  }
+  const raw=parseSimpleCsv(await file.text());
+  if(raw.length<2) throw new Error('헤더와 1명 이상의 자료가 필요합니다.');
+  const headers=raw[0].map(v=>String(v||'').trim().toLowerCase().replace(/[\s_.-]+/g,''));
+  const nameCol=headers.findIndex(v=>['성명','이름','name','displayname'].includes(v));
+  const emailCol=headers.findIndex(v=>['이메일','메일','email'].includes(v));
+  if(nameCol<0||emailCol<0) throw new Error("첫 행에 '성명'과 '이메일' 열이 필요합니다.");
+  const rows=raw.slice(1,201);
+  const counts={};
+  rows.forEach(r=>{const e=String(r[emailCol]||'').trim().toLowerCase();if(e)counts[e]=(counts[e]||0)+1;});
+  const out=rows.map((r,i)=>{
+    const name=String(r[nameCol]||'').trim();
+    const email=String(r[emailCol]||'').trim().toLowerCase();
+    let status='valid',message='초대 가능';
+    if(!name){status='error';message='성명 누락';}
+    else if(!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)){status='error';message='이메일 형식 오류';}
+    else if((counts[email]||0)>1){status='duplicate_file';message='파일 내 이메일 중복';}
+    return {row_number:i+2,name,email,status,message};
+  });
+  return {ok:true,filename:file.name,total:out.length,valid:out.filter(x=>x.status==='valid').length,invalid:out.filter(x=>x.status!=='valid').length,truncated:raw.length-1>200,rows:out};
+}
+async function validateSupporterRoster(input){
+  const file=input?.files?.[0];
+  if(!file)return;
+  state.rosterPreview=null;
+  state.bulkInviteResults=[];
+  try{
+    let data;
+    if(state.demo){
+      data=await parseDemoSupporterRoster(file);
+    }else{
+      const {data:{session}}=await state.client.auth.getSession();
+      if(!session?.access_token) throw new Error('로그인 세션을 확인해 주세요.');
+      const form=new FormData();
+      form.append('file',file);
+      const res=await fetch(CFG.supabaseUrl+'/functions/v1/validate-supporter-roster',{
+        method:'POST',
+        headers:{Authorization:'Bearer '+session.access_token,apikey:CFG.supabaseAnonKey},
+        body:form
+      });
+      data=await res.json().catch(()=>({}));
+      if(!res.ok||!data.ok)throw new Error(data.message||'명부를 검증하지 못했습니다.');
+    }
+    state.rosterPreview=data;
+    input.value='';
+    await renderPage();
+    toast('명부 검증이 완료되었습니다.');
+  }catch(e){
+    input.value='';
+    toast(e.message||String(e));
+  }
+}
+function downloadSupporterRosterTemplate(){
+  const csv='성명,이메일\r\n김지원,supporter@example.kr\r\n';
+  const blob=new Blob(['\ufeff'+csv],{type:'text/csv;charset=utf-8'});
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement('a');
+  a.href=url;a.download='학습지원단_초대명부_양식.csv';a.click();
+  setTimeout(()=>URL.revokeObjectURL(url),1000);
+}
+async function createBulkInvitations(){
+  const rows=(state.rosterPreview?.rows||[]).filter(x=>x.status==='valid');
+  if(!rows.length){toast('초대 가능한 대상이 없습니다.');return;}
+  if(!confirm(rows.length+'명의 초대를 생성하시겠습니까?'))return;
+  const results=[];
+  const base=location.origin+location.pathname;
+  for(let i=0;i<rows.length;i+=5){
+    const batch=rows.slice(i,i+5);
+    const batchResults=await Promise.all(batch.map(async(row,offset)=>{
+      if(state.demo){
+        const n=i+offset+1;
+        return {ok:true,name:row.name,email:row.email,approvalCode:String(610000+n),inviteUrl:base+'?invite='+('a'.repeat(47)+(n%10)),expiresAt:new Date(Date.now()+48*3600000).toISOString()};
+      }
+      const {data,error}=await state.client.rpc('create_supporter_invitation',{
+        p_name:row.name,p_email:row.email,p_expires_hours:48
+      });
+      if(error)return {ok:false,name:row.name,email:row.email,error:error.message};
+      const x=Array.isArray(data)?data[0]:data;
+      if(!x)return {ok:false,name:row.name,email:row.email,error:'초대 결과 없음'};
+      return {ok:true,name:row.name,email:row.email,approvalCode:x.approval_code,inviteUrl:base+'?invite='+encodeURIComponent(x.invite_token),expiresAt:x.expires_at};
+    }));
+    results.push(...batchResults);
+  }
+  state.bulkInviteResults=results;
+  if(!state.demo)await refreshData();
+  await renderPage();
+  toast('일괄 초대 생성을 완료했습니다.');
+}
+async function copyBulkKakaoInvite(index){
+  const x=state.bulkInviteResults?.[index];
+  if(!x?.ok)return;
+  const text='[제천교육지원청 학습지원단 등록 안내]\n'+x.name+' 선생님, 아래 링크로 접속해 등록해 주세요.\n'+x.inviteUrl+'\n\n승인번호는 보안을 위해 카카오톡으로 전달하지 않습니다. 별도로 안내받은 번호를 입력해 주세요.';
+  try{await navigator.clipboard.writeText(text);toast('카카오톡 안내문을 복사했습니다.');}
+  catch(e){prompt('아래 내용을 복사해 카카오톡으로 보내세요.',text);}
+}
+
 function invitationStatusBadge(status,expiresAt){
   if(status==='pending' && expiresAt && new Date(expiresAt).getTime()<=Date.now()) return statusBadge('만료','bad');
   if(status==='pending') return statusBadge('대기','warn');
@@ -491,6 +620,19 @@ function invitationStatusBadge(status,expiresAt){
 }
 async function pageInvites(){
   const last=state.lastInvite;
+  const preview=state.rosterPreview;
+  const bulk=state.bulkInviteResults||[];
+  const previewHtml=preview
+    ? '<div class="card full" style="margin-top:14px"><div class="row between"><div class="section-title">명부 검증 결과</div><div>'+preview.valid+'명 초대 가능 / '+preview.invalid+'명 확인</div></div>'
+      +(preview.truncated?'<div class="notice">한 번에 200명까지만 검증했습니다.</div>':'')
+      +'<div class="list">'+preview.rows.map(x=>'<div class="item"><div class="row between"><div><h3>'+esc(x.row_number)+'행 · '+esc(x.name||'성명 없음')+'</h3><div class="meta">'+esc(x.email||'이메일 없음')+' · '+esc(x.message)+'</div></div>'+rosterStatusBadge(x.status)+'</div></div>').join('')+'</div>'
+      +(preview.valid?'<div class="actions"><button class="btn btn-good" onclick="createBulkInvitations()">유효 '+preview.valid+'명 일괄 초대 생성</button></div>':'')
+      +'</div>' : '';
+  const bulkHtml=bulk.length
+    ? '<div class="card full" style="margin-top:14px"><div class="section-title">일괄 초대 결과</div><div class="notice">승인번호는 이 화면에서만 확인하고 카카오톡에는 링크만 보내세요.</div>'
+      +'<div class="list">'+bulk.map((x,i)=>'<div class="item">'+(x.ok
+        ? '<div class="row between"><div><h3>'+esc(x.name)+' · '+esc(x.email)+'</h3><div class="meta">오프라인 승인번호 <b>'+esc(x.approvalCode)+'</b></div></div>'+statusBadge('생성완료','good')+'</div><div class="actions"><button class="btn btn-primary" onclick="copyBulkKakaoInvite('+i+')">카카오톡 안내문 복사</button></div>'
+        : '<div class="row between"><div><h3>'+esc(x.name)+' · '+esc(x.email)+'</h3><div class="meta">'+esc(x.error||'생성 실패')+'</div></div>'+statusBadge('실패','bad')+'</div>')+'</div>').join('')+'</div></div>' : '';
   const lastHtml=last
     ? '<div class="card full" style="margin-bottom:14px"><div class="section-title">방금 생성한 초대</div>'
       +'<div class="notice"><b>승인번호는 지금만 확인할 수 있습니다.</b><br>카카오톡에는 초대 링크만 보내고 승인번호는 전화·대면 등 별도 경로로 알려주세요.</div>'
@@ -507,6 +649,11 @@ async function pageInvites(){
     : '<div class="empty">생성된 초대가 없습니다.</div>';
   return '<div class="section-title">학습지원단 초대</div>'
     +'<div class="notice">초대 링크는 카카오톡으로 전달하고, 6자리 승인번호는 별도 오프라인 경로로 안내합니다. 기본 유효시간은 48시간입니다.</div>'
+    +'<div class="card full"><div class="section-title">명부 일괄 가져오기</div><p class="muted">XLSX 또는 CSV의 첫 행에 성명, 이메일 열이 필요합니다. 최대 200명, 2MB까지 검증합니다.</p>'
+    +'<div class="actions"><button class="btn btn-ghost" onclick="downloadSupporterRosterTemplate()">명부 양식 받기</button><label class="btn btn-primary" for="supporter-roster-input">엑셀/CSV 명부 선택</label></div>'
+    +'<input id="supporter-roster-input" class="hidden" type="file" accept=".xlsx,.csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv" onchange="validateSupporterRoster(this)"></div>'
+    +previewHtml+bulkHtml
+    +'<div class="section-title" style="margin-top:18px">개별 초대</div>'
     +'<div class="card full"><div class="field"><label>성명</label><input id="invite-name" placeholder="예: 김지원"></div>'
     +'<div class="field"><label>로그인 이메일</label><input id="invite-email" type="email" placeholder="example@korea.kr"></div>'
     +'<div class="field"><label>유효시간</label><select id="invite-hours"><option value="24">24시간</option><option value="48" selected>48시간</option><option value="72">72시간</option></select></div>'
@@ -851,6 +998,7 @@ async function approveAll(){
 
 window.signIn=signIn; window.signOut=signOut; window.redeemInvite=redeemInvite; window.switchRole=switchRole; window.go=go;
 window.createInvitation=createInvitation; window.copyKakaoInvite=copyKakaoInvite; window.revokeInvitation=revokeInvitation;
+window.validateSupporterRoster=validateSupporterRoster; window.downloadSupporterRosterTemplate=downloadSupporterRosterTemplate; window.createBulkInvitations=createBulkInvitations; window.copyBulkKakaoInvite=copyBulkKakaoInvite;
 window.startLesson=startLesson; window.endLesson=endLesson; window.saveLessonRecord=saveLessonRecord; window.setSchoolCurrentLocation=setSchoolCurrentLocation; window.uploadMyIdPhoto=uploadMyIdPhoto;
 window.addCounseling=addCounseling; window.requestScheduleChange=requestScheduleChange;
 window.reverifySession=reverifySession; window.confirmSession=confirmSession; window.rejectSession=rejectSession; window.approveSession=approveSession; window.approveAll=approveAll;
