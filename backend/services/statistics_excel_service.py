@@ -115,13 +115,13 @@ def _dyslex_border(state: dict[str, Any]) -> dict[str, dict[str, Any]]:
             row["applied"] += 1
             if diag.get("done"):
                 row["tested"] += 1
-            prefix = "pos" if diag.get(positive_key) else "neg"
-            if "치료기관연계" in types:
-                row[f"{prefix}_therapy"] += 1
-            if "방과후학습코칭" in types:
-                row[f"{prefix}_coach"] += 1
-            if "수업협력코칭" in types:
-                row[f"{prefix}_class"] += 1
+                prefix = "pos" if diag.get(positive_key) else "neg"
+                if "치료기관연계" in types:
+                    row[f"{prefix}_therapy"] += 1
+                if "방과후학습코칭" in types:
+                    row[f"{prefix}_coach"] += 1
+                if "수업협력코칭" in types:
+                    row[f"{prefix}_class"] += 1
             if unsupported.get("is"):
                 row["unsup"] += 1
                 reason = str(unsupported.get("reason") or "").strip()
@@ -297,8 +297,8 @@ def _build_summary_sheet(wb: Workbook, state: dict[str, Any], statistics: dict[s
 
     row = _section(ws, row, "Ⅳ. 작성 기준", 10)
     notes = [
-        "• 신청 현황은 학생 등록 및 수업협력 활성 매칭을 기준으로 집계합니다.",
-        "• 실제 실적은 실시·검증·지급 상태의 활동 로그를 기준으로 집계합니다.",
+        "• 신청 현황은 현재 학생 등록정보 및 활성 수업협력 학급을 기준으로 한 스냅샷입니다.",
+        "• 실제 실적은 선택한 월/분기의 시작일부터 기준일까지 실시·검증·지급 상태의 활동 로그를 중복 제거하여 집계합니다.",
         "• 치료기관연계 세부 명단은 개인정보 최소화를 위해 성명 없이 별도 시트에 제공합니다.",
         "• 이 파일은 보고·회의·결재 보조용 통계자료이며 원자료 수정용 파일이 아닙니다.",
     ]
@@ -454,7 +454,11 @@ def create_statistics_report_xlsx(
     as_of: str = "",
     report_type: str = "base",
 ) -> Path:
-    statistics = build_statistics({"state": state})
+    statistics = build_statistics({
+        "state": state,
+        "asOf": as_of,
+        "reportType": report_type,
+    })
     wb = Workbook()
     _build_summary_sheet(wb, state, statistics, as_of, report_type)
     _build_after_school_sheet(wb, state, as_of)
