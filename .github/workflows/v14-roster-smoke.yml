@@ -1,0 +1,119 @@
+name: V14 Roster Import Smoke
+
+on:
+  pull_request:
+    paths:
+      - 'realtime-app/**'
+      - 'supabase/functions/validate-supporter-roster/**'
+      - '.github/workflows/v14-roster-smoke.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'realtime-app/**'
+      - 'supabase/functions/validate-supporter-roster/**'
+      - '.github/workflows/v14-roster-smoke.yml'
+  workflow_dispatch:
+
+jobs:
+  roster-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Playwright
+        run: |
+          npm install --no-save playwright@1.56.1
+          npx playwright install --with-deps chromium
+
+      - name: Start static server
+        run: |
+          python3 -m http.server 4173 > /tmp/clinic-http.log 2>&1 &
+          for i in {1..30}; do
+            curl -fsS http://127.0.0.1:4173/realtime-app/ >/dev/null && exit 0
+            sleep 1
+          done
+          cat /tmp/clinic-http.log
+          exit 1
+
+      - name: Verify roster preview and bulk invitation
+        run: |
+          node <<'NODE'
+          const { chromium } = require('playwright');
+
+          async function run(viewport, name) {
+            const browser = await chromium.launch({ headless: true });
+            const context = await browser.newContext({ viewport, serviceWorkers: 'block' });
+            await context.addInitScript(() => {
+              window.APP_CONFIG = { demoMode: true };
+              localStorage.setItem('clinic-demo-role', 'admin');
+            });
+            const page = await context.newPage();
+            const errors = [];
+            page.on('pageerror', e => errors.push(String(e)));
+            await page.route('https://cdn.jsdelivr.net/**', route => route.fulfill({
+              status: 200,
+              contentType: 'application/javascript',
+              body: 'window.supabase = window.supabase || {};'
+            }));
+
+            await page.goto('http://127.0.0.1:4173/realtime-app/?roster-smoke=1', {
+              waitUntil: 'domcontentloaded',
+              timeout: 30000
+            });
+
+            await page.getByRole('button', { name: '학습지원단 초대' }).click();
+            await page.getByText('명부 일괄 가져오기', { exact: true }).waitFor({ state: 'visible' });
+
+            const csv = Buffer.from(
+              '성명,이메일\r\n김일괄,bulk1@example.kr\r\n박일괄,bulk2@example.kr\r\n오류,bad-mail\r\n',
+              'utf8'
+            );
+
+            await page.locator('#supporter-roster-input').setInputFiles({
+              name: 'supporters.csv',
+              mimeType: 'text/csv',
+              buffer: csv
+            });
+
+            await page.getByText('명부 검증 결과', { exact: true }).waitFor({ state: 'visible' });
+            await page.getByText('2명 초대 가능 / 1명 확인', { exact: true }).waitFor({ state: 'visible' });
+
+            const button = page.getByRole('button', { name: '유효 2명 일괄 초대 생성' });
+            page.once('dialog', d => d.accept());
+            await button.click();
+
+            await page.getByText('일괄 초대 결과', { exact: true }).waitFor({ state: 'visible' });
+            await page.getByText('610001', { exact: true }).waitFor({ state: 'visible' });
+            await page.getByText('610002', { exact: true }).waitFor({ state: 'visible' });
+
+            await page.screenshot({
+              path: '/tmp/v14-roster-' + name + '.png',
+              fullPage: true
+            });
+
+            if (errors.length) throw new Error(errors.join(' | '));
+            await browser.close();
+          }
+
+          (async () => {
+            await run({ width: 1440, height: 900 }, 'desktop');
+            await run({ width: 390, height: 844 }, 'mobile');
+            console.log('Roster import smoke passed.');
+          })().catch(e => {
+            console.error(e);
+            process.exit(1);
+          });
+          NODE
+
+      - name: Upload roster screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: v14-roster-smoke
+          path: /tmp/v14-roster-*.png
+          if-no-files-found: ignore
