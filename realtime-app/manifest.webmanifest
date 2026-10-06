@@ -1,0 +1,11 @@
+{
+  "name": "학습지원단 실시간 운영",
+  "short_name": "학습지원단",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#f7f9fc",
+  "theme_color": "#3157d5",
+  "lang": "ko-KR",
+  "description": "학습지원단 시간표·활동확인·지도기록·상담·실시간 운영 PWA"
+}

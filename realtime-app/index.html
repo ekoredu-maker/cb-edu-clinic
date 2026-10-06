@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#3157d5">
+  <title>학습지원단 실시간 운영</title>
+  <link rel="manifest" href="./manifest.webmanifest">
+  <style>
+    :root{--bg:#f5f7fb;--card:#fff;--ink:#172033;--muted:#68758a;--line:#e6eaf1;--primary:#3157d5;--primary2:#2447bb;--good:#178451;--warn:#b56b00;--bad:#c83b3b;--shadow:0 10px 30px rgba(25,42,70,.07)}
+    *{box-sizing:border-box} body{margin:0;background:var(--bg);color:var(--ink);font-family:Pretendard,"Noto Sans KR","Malgun Gothic",Arial,sans-serif}
+    button,input,textarea,select{font:inherit} button{cursor:pointer}
+    .shell{max-width:1120px;margin:0 auto;min-height:100vh;padding-bottom:84px}
+    .top{position:sticky;top:0;z-index:20;background:rgba(255,255,255,.94);backdrop-filter:blur(10px);border-bottom:1px solid var(--line);padding:12px 16px}
+    .topin{max-width:1120px;margin:auto;display:flex;align-items:center;gap:12px}.brand{font-weight:800;font-size:18px}.spacer{flex:1}
+    .chip{display:inline-flex;align-items:center;gap:6px;border-radius:999px;padding:7px 10px;background:#eef2ff;color:#324ba8;font-size:12px;font-weight:700}
+    .role-switch{border:1px solid var(--line);border-radius:10px;padding:8px;background:#fff}
+    main{padding:16px}.hero{background:linear-gradient(135deg,#3157d5,#5d78df);color:white;border-radius:20px;padding:22px;box-shadow:var(--shadow)}
+    .hero h1{font-size:24px;margin:0 0 6px}.hero p{margin:0;opacity:.88}.grid{display:grid;grid-template-columns:repeat(12,1fr);gap:14px;margin-top:14px}
+    .card{grid-column:span 4;background:var(--card);border:1px solid var(--line);border-radius:18px;padding:17px;box-shadow:var(--shadow)}
+    .card.wide{grid-column:span 8}.card.full{grid-column:1/-1}.kpi{font-size:30px;font-weight:800;margin-top:8px}.label{font-size:13px;color:var(--muted)}
+    .row{display:flex;align-items:center;gap:10px}.between{justify-content:space-between}.stack{display:flex;flex-direction:column;gap:10px}
+    .list{display:flex;flex-direction:column;gap:10px}.item{border:1px solid var(--line);border-radius:14px;padding:13px;background:#fff}
+    .item h3{font-size:15px;margin:0 0 5px}.meta{font-size:12px;color:var(--muted)}.status{font-size:11px;font-weight:800;border-radius:999px;padding:5px 8px}
+    .s-good{background:#e8f7ef;color:var(--good)}.s-warn{background:#fff4df;color:var(--warn)}.s-bad{background:#ffeded;color:var(--bad)}.s-neutral{background:#eef1f5;color:#566175}
+    .btn{border:0;border-radius:11px;padding:10px 13px;font-weight:800}.btn-primary{background:var(--primary);color:#fff}.btn-primary:hover{background:var(--primary2)}
+    .btn-ghost{background:#eef2ff;color:#314dad}.btn-good{background:#e8f7ef;color:#116a42}.btn-warn{background:#fff0d5;color:#9a5b00}.btn-danger{background:#ffebeb;color:#ad2f2f}
+    .actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}.empty{padding:28px;text-align:center;color:var(--muted);border:1px dashed var(--line);border-radius:14px}
+    .bottom{position:fixed;bottom:0;left:0;right:0;z-index:25;background:rgba(255,255,255,.96);backdrop-filter:blur(10px);border-top:1px solid var(--line)}
+    .bottomin{max-width:760px;margin:auto;display:flex;justify-content:space-around;padding:7px 6px calc(7px + env(safe-area-inset-bottom))}
+    .navbtn{border:0;background:transparent;color:#667085;font-size:11px;padding:6px 9px;border-radius:10px;min-width:64px}.navbtn b{display:block;font-size:18px;margin-bottom:2px}.navbtn.active{background:#eef2ff;color:#2948b4}
+    .login{max-width:440px;margin:70px auto;background:#fff;border:1px solid var(--line);border-radius:20px;padding:22px;box-shadow:var(--shadow)}
+    .login h2{margin:0 0 14px}.field{margin:10px 0}.field label{display:block;font-size:12px;color:var(--muted);margin-bottom:5px}.field input,.field textarea,.field select{width:100%;padding:12px;border:1px solid var(--line);border-radius:10px;background:#fff}.field textarea{min-height:100px;resize:vertical}
+    .notice{padding:11px 13px;border-radius:12px;background:#eef2ff;color:#324ba8;font-size:13px;margin:10px 0}
+    .toast{position:fixed;left:50%;transform:translateX(-50%);bottom:92px;background:#1d2738;color:#fff;padding:11px 15px;border-radius:12px;z-index:50;box-shadow:var(--shadow);font-size:13px}
+    .idcard{background:linear-gradient(145deg,#18284c,#3157d5);color:#fff;border-radius:18px;padding:20px;min-height:180px;position:relative;overflow:hidden}
+    .idcard:after{content:"";position:absolute;width:180px;height:180px;border-radius:50%;background:rgba(255,255,255,.08);right:-50px;top:-60px}.idcard .name{font-size:26px;font-weight:900;margin-top:42px}
+    .muted{color:var(--muted)} .tiny{font-size:11px}.section-title{font-size:18px;font-weight:900;margin:6px 0 12px}.hidden{display:none!important}
+    @media(max-width:780px){.card,.card.wide{grid-column:1/-1}.hero h1{font-size:21px}.top .brand{font-size:16px}.role-switch{max-width:125px}}
+  </style>
+</head>
+<body>
+<div id="app"></div>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="./config.js"></script>
+<script src="./app.js"></script>
+</body>
+</html>

@@ -1,0 +1,914 @@
+-- V14 Realtime Operations / Supabase schema
+-- Live baseline synchronized with cb-edu-clinic Supabase project.
+-- Public client uses a publishable key; authorization is enforced by Auth + RLS.
+
+create extension if not exists pgcrypto;
+
+create schema if not exists private;
+revoke all on schema private from public;
+grant usage on schema private to authenticated;
+
+create table if not exists public.profiles (
+  id uuid primary key references auth.users(id) on delete cascade,
+  legacy_staff_id text,
+  display_name text not null,
+  phone text,
+  roles text[] not null default array['supporter']::text[]
+    check (cardinality(roles) >= 1 and roles <@ array['supporter','counselor','admin','supervisor']::text[]),
+  identity_verified boolean not null default false,
+  identity_verified_at timestamptz,
+  active boolean not null default true,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create unique index if not exists profiles_legacy_staff_id_uq
+  on public.profiles(legacy_staff_id) where legacy_staff_id is not null;
+
+create table if not exists public.program_settings (
+  id integer primary key default 1 check (id = 1),
+  org_name text not null default '○○교육지원청',
+  coach_rate integer not null default 40000 check (coach_rate >= 0),
+  class_rate integer not null default 30000 check (class_rate >= 0),
+  travel_long_rate integer not null default 20000 check (travel_long_rate >= 0),
+  travel_short_rate integer not null default 10000 check (travel_short_rate >= 0),
+  tax_pct numeric(5,2) not null default 3.30 check (tax_pct between 0 and 100),
+  default_location_radius_m integer not null default 250 check (default_location_radius_m between 10 and 5000),
+  max_location_accuracy_m integer not null default 150 check (max_location_accuracy_m between 10 and 5000),
+  start_window_before_min integer not null default 60 check (start_window_before_min between 0 and 720),
+  start_window_after_min integer not null default 90 check (start_window_after_min between 0 and 720),
+  min_duration_ratio numeric(5,2) not null default 0.50 check (min_duration_ratio between 0 and 2),
+  updated_at timestamptz not null default now()
+);
+
+insert into public.program_settings(id, org_name)
+values (1, '제천교육지원청')
+on conflict (id) do nothing;
+
+create table if not exists public.schools (
+  id uuid primary key default gen_random_uuid(),
+  legacy_school_code text,
+  name text not null,
+  latitude double precision check (latitude is null or latitude between -90 and 90),
+  longitude double precision check (longitude is null or longitude between -180 and 180),
+  radius_m integer check (radius_m is null or radius_m between 10 and 5000),
+  active boolean not null default true,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create unique index if not exists schools_legacy_school_code_uq
+  on public.schools(legacy_school_code) where legacy_school_code is not null;
+
+create table if not exists public.students (
+  id uuid primary key default gen_random_uuid(),
+  legacy_student_id text,
+  school_id uuid references public.schools(id),
+  full_name text not null,
+  alias text,
+  school_type text,
+  grade integer check (grade is null or grade between 1 and 12),
+  class_no integer check (class_no is null or class_no between 1 and 99),
+  active boolean not null default true,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create unique index if not exists students_legacy_student_id_uq
+  on public.students(legacy_student_id) where legacy_student_id is not null;
+create index if not exists students_school_id_idx on public.students(school_id);
+
+create table if not exists public.assignments (
+  id uuid primary key default gen_random_uuid(),
+  legacy_matching_id text,
+  supporter_id uuid not null references public.profiles(id),
+  student_id uuid not null references public.students(id),
+  kind text not null default 'coach' check (kind in ('coach','class')),
+  status text not null default 'active' check (status in ('active','paused','ended')),
+  started_on date,
+  ended_on date,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  check (ended_on is null or started_on is null or ended_on >= started_on)
+);
+
+create unique index if not exists assignments_legacy_matching_id_uq
+  on public.assignments(legacy_matching_id) where legacy_matching_id is not null;
+create index if not exists assignments_supporter_idx on public.assignments(supporter_id);
+create index if not exists assignments_student_idx on public.assignments(student_id);
+
+create table if not exists public.schedule_plans (
+  id uuid primary key default gen_random_uuid(),
+  assignment_id uuid not null references public.assignments(id) on delete cascade,
+  school_id uuid references public.schools(id),
+  specific_date date,
+  weekday smallint check (weekday between 1 and 7),
+  planned_start time not null,
+  planned_end time not null,
+  place text,
+  effective_from date,
+  effective_to date,
+  active boolean not null default true,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  check (planned_end > planned_start),
+  check (specific_date is not null or weekday is not null),
+  check (effective_to is null or effective_from is null or effective_to >= effective_from)
+);
+
+create index if not exists schedule_plans_assignment_idx on public.schedule_plans(assignment_id);
+create index if not exists schedule_plans_school_idx on public.schedule_plans(school_id);
+
+create table if not exists public.sessions (
+  id uuid primary key default gen_random_uuid(),
+  schedule_plan_id uuid not null references public.schedule_plans(id),
+  assignment_id uuid not null references public.assignments(id),
+  supporter_id uuid not null references public.profiles(id),
+  student_id uuid not null references public.students(id),
+  work_date date not null,
+  planned_start_at timestamptz,
+  planned_end_at timestamptz,
+  start_at timestamptz,
+  end_at timestamptz,
+  session_status text not null default 'planned'
+    check (session_status in ('planned','in_progress','completed','absent','cancelled','makeup')),
+  verification_state text not null default 'pending'
+    check (verification_state in ('pending','auto_verified','review_required','confirmed','rejected')),
+  settlement_state text not null default 'pending'
+    check (settlement_state in ('pending','approved','paid')),
+  verification_reason text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique(schedule_plan_id, work_date),
+  check (end_at is null or start_at is null or end_at > start_at)
+);
+
+create index if not exists sessions_supporter_date_idx on public.sessions(supporter_id, work_date);
+create index if not exists sessions_student_date_idx on public.sessions(student_id, work_date);
+create index if not exists sessions_verification_idx on public.sessions(verification_state, work_date);
+create index if not exists sessions_settlement_idx on public.sessions(settlement_state, work_date);
+
+create table if not exists public.session_locations (
+  id uuid primary key default gen_random_uuid(),
+  session_id uuid not null references public.sessions(id) on delete cascade,
+  point_type text not null check (point_type in ('start','end')),
+  latitude double precision not null check (latitude between -90 and 90),
+  longitude double precision not null check (longitude between -180 and 180),
+  accuracy_m double precision check (accuracy_m is null or accuracy_m >= 0),
+  distance_m double precision check (distance_m is null or distance_m >= 0),
+  within_radius boolean,
+  captured_at timestamptz not null default now(),
+  unique(session_id, point_type)
+);
+
+create table if not exists public.lesson_records (
+  id uuid primary key default gen_random_uuid(),
+  session_id uuid not null unique references public.sessions(id) on delete cascade,
+  supporter_id uuid not null references public.profiles(id),
+  student_id uuid not null references public.students(id),
+  subject_area text,
+  topic text,
+  content text,
+  student_response text,
+  next_plan text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create index if not exists lesson_records_student_idx on public.lesson_records(student_id);
+
+create table if not exists public.counseling_records (
+  id uuid primary key default gen_random_uuid(),
+  student_id uuid not null references public.students(id),
+  assignment_id uuid references public.assignments(id),
+  author_id uuid not null references public.profiles(id),
+  counseling_type text not null default 'student'
+    check (counseling_type in ('student','guardian','teacher','school','other')),
+  occurred_at timestamptz not null default now(),
+  content text not null,
+  follow_up text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create index if not exists counseling_student_idx on public.counseling_records(student_id, occurred_at desc);
+create index if not exists counseling_author_idx on public.counseling_records(author_id, occurred_at desc);
+
+create table if not exists public.change_requests (
+  id uuid primary key default gen_random_uuid(),
+  requester_id uuid not null references public.profiles(id),
+  assignment_id uuid references public.assignments(id),
+  schedule_plan_id uuid references public.schedule_plans(id),
+  request_type text not null
+    check (request_type in ('schedule','assignment','student','school','end_support','other')),
+  requested_value jsonb not null default '{}'::jsonb,
+  reason text,
+  status text not null default 'pending'
+    check (status in ('pending','approved','rejected','applied')),
+  reviewed_by uuid references public.profiles(id),
+  reviewed_at timestamptz,
+  review_note text,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists change_requests_status_idx on public.change_requests(status, created_at desc);
+
+create table if not exists public.notices (
+  id uuid primary key default gen_random_uuid(),
+  title text not null,
+  body text not null,
+  target_roles text[] not null default array['supporter','counselor','admin','supervisor']::text[],
+  published boolean not null default false,
+  published_at timestamptz,
+  expires_at timestamptz,
+  created_by uuid references public.profiles(id),
+  created_at timestamptz not null default now(),
+  check (target_roles <@ array['supporter','counselor','admin','supervisor']::text[])
+);
+
+create table if not exists public.notice_reads (
+  notice_id uuid not null references public.notices(id) on delete cascade,
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  read_at timestamptz not null default now(),
+  primary key (notice_id, user_id)
+);
+
+create table if not exists public.push_subscriptions (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  endpoint text not null,
+  p256dh text,
+  auth text,
+  user_agent text,
+  active boolean not null default true,
+  created_at timestamptz not null default now(),
+  unique(user_id, endpoint)
+);
+
+create table if not exists public.audit_logs (
+  id bigserial primary key,
+  actor_id uuid references public.profiles(id),
+  action text not null,
+  entity_type text not null,
+  entity_id text,
+  detail jsonb not null default '{}'::jsonb,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists audit_logs_actor_idx on public.audit_logs(actor_id, created_at desc);
+create index if not exists audit_logs_entity_idx on public.audit_logs(entity_type, entity_id, created_at desc);
+
+create or replace function private.touch_updated_at()
+returns trigger
+language plpgsql
+set search_path = public
+as $$
+begin
+  new.updated_at := now();
+  return new;
+end;
+$$;
+
+drop trigger if exists profiles_touch_updated_at on public.profiles;
+create trigger profiles_touch_updated_at before update on public.profiles
+for each row execute function private.touch_updated_at();
+
+drop trigger if exists settings_touch_updated_at on public.program_settings;
+create trigger settings_touch_updated_at before update on public.program_settings
+for each row execute function private.touch_updated_at();
+
+drop trigger if exists schools_touch_updated_at on public.schools;
+create trigger schools_touch_updated_at before update on public.schools
+for each row execute function private.touch_updated_at();
+
+drop trigger if exists students_touch_updated_at on public.students;
+create trigger students_touch_updated_at before update on public.students
+for each row execute function private.touch_updated_at();
+
+drop trigger if exists assignments_touch_updated_at on public.assignments;
+create trigger assignments_touch_updated_at before update on public.assignments
+for each row execute function private.touch_updated_at();
+
+drop trigger if exists plans_touch_updated_at on public.schedule_plans;
+create trigger plans_touch_updated_at before update on public.schedule_plans
+for each row execute function private.touch_updated_at();
+
+drop trigger if exists sessions_touch_updated_at on public.sessions;
+create trigger sessions_touch_updated_at before update on public.sessions
+for each row execute function private.touch_updated_at();
+
+drop trigger if exists lesson_touch_updated_at on public.lesson_records;
+create trigger lesson_touch_updated_at before update on public.lesson_records
+for each row execute function private.touch_updated_at();
+
+drop trigger if exists counseling_touch_updated_at on public.counseling_records;
+create trigger counseling_touch_updated_at before update on public.counseling_records
+for each row execute function private.touch_updated_at();
+
+create or replace function private.has_role(role_name text)
+returns boolean
+language sql
+stable
+security definer
+set search_path = public, pg_temp
+as $$
+  select (select auth.uid()) is not null
+     and exists (
+       select 1 from public.profiles p
+       where p.id = (select auth.uid())
+         and p.active = true
+         and role_name = any(p.roles)
+     );
+$$;
+
+create or replace function private.is_office_user()
+returns boolean
+language sql
+stable
+security definer
+set search_path = public, pg_temp
+as $$
+  select private.has_role('counselor')
+      or private.has_role('admin')
+      or private.has_role('supervisor');
+$$;
+
+revoke all on function private.has_role(text) from public;
+revoke all on function private.is_office_user() from public;
+grant execute on function private.has_role(text) to authenticated;
+grant execute on function private.is_office_user() to authenticated;
+
+create or replace function private.handle_new_user()
+returns trigger
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+begin
+  insert into public.profiles(id, display_name, roles)
+  values (
+    new.id,
+    coalesce(nullif(new.raw_user_meta_data ->> 'display_name',''), split_part(coalesce(new.email,''),'@',1), '사용자'),
+    array['supporter']::text[]
+  )
+  on conflict (id) do nothing;
+  return new;
+end;
+$$;
+
+revoke all on function private.handle_new_user() from public;
+
+drop trigger if exists on_auth_user_created on auth.users;
+create trigger on_auth_user_created
+after insert on auth.users
+for each row execute function private.handle_new_user();
+
+create or replace function public.distance_meters(
+  lat1 double precision,
+  lon1 double precision,
+  lat2 double precision,
+  lon2 double precision
+)
+returns double precision
+language sql
+immutable
+set search_path = pg_catalog
+as $$
+  select case
+    when lat1 is null or lon1 is null or lat2 is null or lon2 is null then null
+    else 6371000 * acos(
+      least(1.0, greatest(-1.0,
+        cos(radians(lat1)) * cos(radians(lat2)) * cos(radians(lon2) - radians(lon1))
+        + sin(radians(lat1)) * sin(radians(lat2))
+      ))
+    )
+  end;
+$$;
+
+create or replace function public.start_session(
+  p_schedule_plan_id uuid,
+  p_latitude double precision,
+  p_longitude double precision,
+  p_accuracy_m double precision default null
+)
+returns uuid
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  v_uid uuid := (select auth.uid());
+  v_plan public.schedule_plans;
+  v_assignment public.assignments;
+  v_school public.schools;
+  v_session public.sessions;
+  v_session_id uuid;
+  v_now timestamptz := now();
+  v_today date := (now() at time zone 'Asia/Seoul')::date;
+  v_distance double precision;
+  v_radius integer;
+begin
+  if v_uid is null then raise exception '로그인이 필요합니다.'; end if;
+  if p_latitude not between -90 and 90 or p_longitude not between -180 and 180 then
+    raise exception '위치값이 올바르지 않습니다.';
+  end if;
+
+  select * into v_plan
+  from public.schedule_plans
+  where id = p_schedule_plan_id and active = true;
+
+  if v_plan.id is null then raise exception '활성 시간표를 찾을 수 없습니다.'; end if;
+
+  select * into v_assignment
+  from public.assignments
+  where id = v_plan.assignment_id and status = 'active';
+
+  if v_assignment.id is null or v_assignment.supporter_id <> v_uid then
+    raise exception '이 수업을 시작할 권한이 없습니다.';
+  end if;
+
+  if v_plan.specific_date is not null and v_plan.specific_date <> v_today then
+    raise exception '오늘 수업이 아닙니다.';
+  end if;
+
+  if v_plan.specific_date is null
+     and v_plan.weekday <> extract(isodow from v_today)::smallint then
+    raise exception '오늘 수업이 아닙니다.';
+  end if;
+
+  if v_plan.effective_from is not null and v_today < v_plan.effective_from then
+    raise exception '아직 운영기간이 아닙니다.';
+  end if;
+
+  if v_plan.effective_to is not null and v_today > v_plan.effective_to then
+    raise exception '운영기간이 종료되었습니다.';
+  end if;
+
+  select * into v_session
+  from public.sessions
+  where schedule_plan_id = v_plan.id and work_date = v_today;
+
+  if v_session.id is not null then
+    if v_session.session_status = 'completed' or v_session.end_at is not null then
+      raise exception '이미 종료된 수업입니다.';
+    end if;
+    if v_session.start_at is not null then
+      raise exception '이미 시작된 수업입니다.';
+    end if;
+  end if;
+
+  insert into public.sessions(
+    schedule_plan_id, assignment_id, supporter_id, student_id, work_date,
+    planned_start_at, planned_end_at, start_at, session_status
+  )
+  values(
+    v_plan.id,
+    v_assignment.id,
+    v_assignment.supporter_id,
+    v_assignment.student_id,
+    v_today,
+    (v_today + v_plan.planned_start) at time zone 'Asia/Seoul',
+    (v_today + v_plan.planned_end) at time zone 'Asia/Seoul',
+    v_now,
+    'in_progress'
+  )
+  on conflict(schedule_plan_id, work_date)
+  do update set
+    start_at = excluded.start_at,
+    session_status = 'in_progress',
+    updated_at = v_now
+  returning id into v_session_id;
+
+  select * into v_school from public.schools where id = v_plan.school_id;
+
+  select coalesce(v_school.radius_m, ps.default_location_radius_m)
+  into v_radius
+  from public.program_settings ps where ps.id = 1;
+
+  v_distance := public.distance_meters(
+    p_latitude, p_longitude, v_school.latitude, v_school.longitude
+  );
+
+  insert into public.session_locations(
+    session_id, point_type, latitude, longitude, accuracy_m,
+    distance_m, within_radius, captured_at
+  )
+  values(
+    v_session_id, 'start', p_latitude, p_longitude, p_accuracy_m,
+    v_distance,
+    case when v_distance is null then null else v_distance <= v_radius end,
+    v_now
+  )
+  on conflict(session_id, point_type) do nothing;
+
+  insert into public.audit_logs(actor_id, action, entity_type, entity_id, detail)
+  values(
+    v_uid,
+    'session_start',
+    'session',
+    v_session_id::text,
+    jsonb_build_object('distance_m', v_distance, 'accuracy_m', p_accuracy_m)
+  );
+
+  return v_session_id;
+end;
+$$;
+
+create or replace function public.end_session(
+  p_session_id uuid,
+  p_latitude double precision,
+  p_longitude double precision,
+  p_accuracy_m double precision default null
+)
+returns text
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  v_uid uuid := (select auth.uid());
+  v_session public.sessions;
+  v_plan public.schedule_plans;
+  v_school public.schools;
+  v_start_loc public.session_locations;
+  v_now timestamptz := now();
+  v_distance double precision;
+  v_radius integer;
+  v_max_accuracy integer;
+  v_before integer;
+  v_after integer;
+  v_planned_minutes numeric;
+  v_actual_minutes numeric;
+  v_min_ratio numeric;
+  v_result text;
+  v_reason text;
+begin
+  if v_uid is null then raise exception '로그인이 필요합니다.'; end if;
+  if p_latitude not between -90 and 90 or p_longitude not between -180 and 180 then
+    raise exception '위치값이 올바르지 않습니다.';
+  end if;
+
+  select * into v_session from public.sessions where id = p_session_id;
+
+  if v_session.id is null or v_session.supporter_id <> v_uid then
+    raise exception '이 수업을 종료할 권한이 없습니다.';
+  end if;
+
+  if v_session.start_at is null then raise exception '시작 기록이 없습니다.'; end if;
+
+  if v_session.end_at is not null or v_session.session_status = 'completed' then
+    raise exception '이미 종료된 수업입니다.';
+  end if;
+
+  select * into v_plan from public.schedule_plans where id = v_session.schedule_plan_id;
+  select * into v_school from public.schools where id = v_plan.school_id;
+
+  select
+    coalesce(v_school.radius_m, ps.default_location_radius_m),
+    ps.max_location_accuracy_m,
+    ps.start_window_before_min,
+    ps.start_window_after_min,
+    ps.min_duration_ratio
+  into v_radius, v_max_accuracy, v_before, v_after, v_min_ratio
+  from public.program_settings ps
+  where ps.id = 1;
+
+  v_distance := public.distance_meters(
+    p_latitude, p_longitude, v_school.latitude, v_school.longitude
+  );
+
+  insert into public.session_locations(
+    session_id, point_type, latitude, longitude, accuracy_m,
+    distance_m, within_radius, captured_at
+  )
+  values(
+    p_session_id, 'end', p_latitude, p_longitude, p_accuracy_m,
+    v_distance,
+    case when v_distance is null then null else v_distance <= v_radius end,
+    v_now
+  )
+  on conflict(session_id, point_type) do nothing;
+
+  select * into v_start_loc
+  from public.session_locations
+  where session_id = p_session_id and point_type = 'start';
+
+  v_planned_minutes := extract(epoch from (v_session.planned_end_at - v_session.planned_start_at)) / 60.0;
+  v_actual_minutes := extract(epoch from (v_now - v_session.start_at)) / 60.0;
+
+  if coalesce(v_start_loc.within_radius, false)
+     and coalesce(v_distance <= v_radius, false)
+     and (v_start_loc.accuracy_m is null or v_start_loc.accuracy_m <= v_max_accuracy)
+     and (p_accuracy_m is null or p_accuracy_m <= v_max_accuracy)
+     and v_session.start_at >= v_session.planned_start_at - make_interval(mins => v_before)
+     and v_session.start_at <= v_session.planned_start_at + make_interval(mins => v_after)
+     and v_actual_minutes >= greatest(10, v_planned_minutes * v_min_ratio)
+     and v_actual_minutes <= v_planned_minutes + 120
+  then
+    v_result := 'auto_verified';
+    v_reason := '서버시각·위치·수업시간 자동검증 통과';
+  else
+    v_result := 'review_required';
+    v_reason := concat_ws(' / ',
+      case when not coalesce(v_start_loc.within_radius,false) then '시작 위치 확인' end,
+      case when not coalesce(v_distance <= v_radius,false) then '종료 위치 확인' end,
+      case when v_start_loc.accuracy_m is not null and v_start_loc.accuracy_m > v_max_accuracy then '시작 GPS 정확도 확인' end,
+      case when p_accuracy_m is not null and p_accuracy_m > v_max_accuracy then '종료 GPS 정확도 확인' end,
+      case when v_session.start_at < v_session.planned_start_at - make_interval(mins => v_before)
+             or v_session.start_at > v_session.planned_start_at + make_interval(mins => v_after)
+           then '계획시간 대비 시작시각 확인' end,
+      case when v_actual_minutes < greatest(10, v_planned_minutes * v_min_ratio)
+             or v_actual_minutes > v_planned_minutes + 120
+           then '실제 활동시간 확인' end
+    );
+    if coalesce(v_reason,'') = '' then
+      v_reason := '자동검증 조건 확인 필요';
+    end if;
+  end if;
+
+  update public.sessions
+  set end_at = v_now,
+      session_status = 'completed',
+      verification_state = v_result,
+      verification_reason = v_reason,
+      updated_at = v_now
+  where id = p_session_id;
+
+  insert into public.audit_logs(actor_id, action, entity_type, entity_id, detail)
+  values(
+    v_uid,
+    'session_end',
+    'session',
+    p_session_id::text,
+    jsonb_build_object(
+      'distance_m', v_distance,
+      'accuracy_m', p_accuracy_m,
+      'actual_minutes', v_actual_minutes,
+      'verification', v_result
+    )
+  );
+
+  return v_result;
+end;
+$$;
+
+revoke all on function public.start_session(uuid,double precision,double precision,double precision) from public, anon;
+revoke all on function public.end_session(uuid,double precision,double precision,double precision) from public, anon;
+grant execute on function public.start_session(uuid,double precision,double precision,double precision) to authenticated;
+grant execute on function public.end_session(uuid,double precision,double precision,double precision) to authenticated;
+
+alter table public.profiles enable row level security;
+alter table public.program_settings enable row level security;
+alter table public.schools enable row level security;
+alter table public.students enable row level security;
+alter table public.assignments enable row level security;
+alter table public.schedule_plans enable row level security;
+alter table public.sessions enable row level security;
+alter table public.session_locations enable row level security;
+alter table public.lesson_records enable row level security;
+alter table public.counseling_records enable row level security;
+alter table public.change_requests enable row level security;
+alter table public.notices enable row level security;
+alter table public.notice_reads enable row level security;
+alter table public.push_subscriptions enable row level security;
+alter table public.audit_logs enable row level security;
+
+drop policy if exists profiles_select on public.profiles;
+create policy profiles_select on public.profiles for select to authenticated
+using (id = (select auth.uid()) or private.is_office_user());
+
+drop policy if exists settings_select on public.program_settings;
+create policy settings_select on public.program_settings for select to authenticated
+using (private.is_office_user());
+
+drop policy if exists settings_write on public.program_settings;
+create policy settings_write on public.program_settings for update to authenticated
+using (private.has_role('admin') or private.has_role('supervisor'))
+with check (private.has_role('admin') or private.has_role('supervisor'));
+
+drop policy if exists schools_select on public.schools;
+create policy schools_select on public.schools for select to authenticated
+using (
+  private.is_office_user()
+  or exists (
+    select 1
+    from public.assignments a
+    join public.students s on s.id = a.student_id
+    where a.supporter_id = (select auth.uid())
+      and a.status = 'active'
+      and s.school_id = schools.id
+  )
+);
+
+drop policy if exists schools_write on public.schools;
+create policy schools_write on public.schools for all to authenticated
+using (private.is_office_user())
+with check (private.is_office_user());
+
+drop policy if exists students_select on public.students;
+create policy students_select on public.students for select to authenticated
+using (
+  private.is_office_user()
+  or exists (
+    select 1 from public.assignments a
+    where a.student_id = students.id
+      and a.supporter_id = (select auth.uid())
+      and a.status = 'active'
+  )
+);
+
+drop policy if exists students_write on public.students;
+create policy students_write on public.students for all to authenticated
+using (private.is_office_user())
+with check (private.is_office_user());
+
+drop policy if exists assignments_select on public.assignments;
+create policy assignments_select on public.assignments for select to authenticated
+using (private.is_office_user() or supporter_id = (select auth.uid()));
+
+drop policy if exists assignments_write on public.assignments;
+create policy assignments_write on public.assignments for all to authenticated
+using (private.is_office_user())
+with check (private.is_office_user());
+
+drop policy if exists plans_select on public.schedule_plans;
+create policy plans_select on public.schedule_plans for select to authenticated
+using (
+  private.is_office_user()
+  or exists (
+    select 1 from public.assignments a
+    where a.id = schedule_plans.assignment_id
+      and a.supporter_id = (select auth.uid())
+  )
+);
+
+drop policy if exists plans_write on public.schedule_plans;
+create policy plans_write on public.schedule_plans for all to authenticated
+using (private.is_office_user())
+with check (private.is_office_user());
+
+drop policy if exists sessions_select on public.sessions;
+create policy sessions_select on public.sessions for select to authenticated
+using (private.is_office_user() or supporter_id = (select auth.uid()));
+
+drop policy if exists sessions_office_update on public.sessions;
+create policy sessions_office_update on public.sessions for update to authenticated
+using (private.is_office_user())
+with check (private.is_office_user());
+
+drop policy if exists locations_select on public.session_locations;
+create policy locations_select on public.session_locations for select to authenticated
+using (
+  private.is_office_user()
+  or exists (
+    select 1 from public.sessions s
+    where s.id = session_locations.session_id
+      and s.supporter_id = (select auth.uid())
+  )
+);
+
+drop policy if exists lessons_select on public.lesson_records;
+create policy lessons_select on public.lesson_records for select to authenticated
+using (private.is_office_user() or supporter_id = (select auth.uid()));
+
+drop policy if exists lessons_insert on public.lesson_records;
+create policy lessons_insert on public.lesson_records for insert to authenticated
+with check (
+  supporter_id = (select auth.uid())
+  and exists (
+    select 1 from public.sessions s
+    where s.id = lesson_records.session_id
+      and s.supporter_id = (select auth.uid())
+  )
+);
+
+drop policy if exists lessons_update on public.lesson_records;
+create policy lessons_update on public.lesson_records for update to authenticated
+using (supporter_id = (select auth.uid()) or private.is_office_user())
+with check (supporter_id = (select auth.uid()) or private.is_office_user());
+
+drop policy if exists counseling_select on public.counseling_records;
+create policy counseling_select on public.counseling_records for select to authenticated
+using (private.is_office_user() or author_id = (select auth.uid()));
+
+drop policy if exists counseling_insert on public.counseling_records;
+create policy counseling_insert on public.counseling_records for insert to authenticated
+with check (
+  author_id = (select auth.uid())
+  and (
+    private.is_office_user()
+    or exists (
+      select 1 from public.assignments a
+      where a.student_id = counseling_records.student_id
+        and a.supporter_id = (select auth.uid())
+        and a.status = 'active'
+    )
+  )
+);
+
+drop policy if exists counseling_update on public.counseling_records;
+create policy counseling_update on public.counseling_records for update to authenticated
+using (author_id = (select auth.uid()) or private.is_office_user())
+with check (author_id = (select auth.uid()) or private.is_office_user());
+
+drop policy if exists requests_select on public.change_requests;
+create policy requests_select on public.change_requests for select to authenticated
+using (private.is_office_user() or requester_id = (select auth.uid()));
+
+drop policy if exists requests_insert on public.change_requests;
+create policy requests_insert on public.change_requests for insert to authenticated
+with check (requester_id = (select auth.uid()));
+
+drop policy if exists requests_office_update on public.change_requests;
+create policy requests_office_update on public.change_requests for update to authenticated
+using (private.is_office_user())
+with check (private.is_office_user());
+
+drop policy if exists notices_select on public.notices;
+create policy notices_select on public.notices for select to authenticated
+using (
+  published = true
+  and (expires_at is null or expires_at > now())
+  and exists (
+    select 1 from public.profiles p
+    where p.id = (select auth.uid())
+      and p.active = true
+      and p.roles && notices.target_roles
+  )
+);
+
+drop policy if exists notices_write on public.notices;
+create policy notices_write on public.notices for all to authenticated
+using (private.is_office_user())
+with check (private.is_office_user());
+
+drop policy if exists notice_reads_select on public.notice_reads;
+create policy notice_reads_select on public.notice_reads for select to authenticated
+using (user_id = (select auth.uid()) or private.is_office_user());
+
+drop policy if exists notice_reads_insert on public.notice_reads;
+create policy notice_reads_insert on public.notice_reads for insert to authenticated
+with check (user_id = (select auth.uid()));
+
+drop policy if exists push_select on public.push_subscriptions;
+create policy push_select on public.push_subscriptions for select to authenticated
+using (user_id = (select auth.uid()));
+
+drop policy if exists push_insert on public.push_subscriptions;
+create policy push_insert on public.push_subscriptions for insert to authenticated
+with check (user_id = (select auth.uid()));
+
+drop policy if exists push_update on public.push_subscriptions;
+create policy push_update on public.push_subscriptions for update to authenticated
+using (user_id = (select auth.uid()))
+with check (user_id = (select auth.uid()));
+
+drop policy if exists push_delete on public.push_subscriptions;
+create policy push_delete on public.push_subscriptions for delete to authenticated
+using (user_id = (select auth.uid()));
+
+drop policy if exists audit_select on public.audit_logs;
+create policy audit_select on public.audit_logs for select to authenticated
+using (private.is_office_user());
+
+revoke all on all tables in schema public from anon;
+revoke all on all sequences in schema public from anon;
+
+grant select on public.profiles to authenticated;
+grant select, update on public.program_settings to authenticated;
+grant select, insert, update, delete on public.schools to authenticated;
+grant select, insert, update, delete on public.students to authenticated;
+grant select, insert, update, delete on public.assignments to authenticated;
+grant select, insert, update, delete on public.schedule_plans to authenticated;
+grant select, update on public.sessions to authenticated;
+grant select on public.session_locations to authenticated;
+grant select, insert, update on public.lesson_records to authenticated;
+grant select, insert, update on public.counseling_records to authenticated;
+grant select, insert, update on public.change_requests to authenticated;
+grant select, insert, update, delete on public.notices to authenticated;
+grant select, insert on public.notice_reads to authenticated;
+grant select, insert, update, delete on public.push_subscriptions to authenticated;
+grant select on public.audit_logs to authenticated;
+
+do $$
+begin
+  if not exists (
+    select 1
+    from pg_publication_tables
+    where pubname='supabase_realtime'
+      and schemaname='public'
+      and tablename='sessions'
+  ) then
+    alter publication supabase_realtime add table public.sessions;
+  end if;
+
+  if not exists (
+    select 1
+    from pg_publication_tables
+    where pubname='supabase_realtime'
+      and schemaname='public'
+      and tablename='notices'
+  ) then
+    alter publication supabase_realtime add table public.notices;
+  end if;
+end $$;
