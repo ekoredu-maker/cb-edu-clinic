@@ -3339,15 +3339,41 @@ function toggleVerAll(cb){
 async function verifyOne(matId, logId, newStatus){
   const m = db.mat.find(x=>x.id===matId); if(!m) return;
   const l = (m.logs||[]).find(x=>x.id===logId); if(!l) return;
+
+  const currentStatus = l.status || 'conducted';
+  if(currentStatus === 'paid' && newStatus !== 'paid'){
+    toast('지급완료 실적은 검증 상태를 되돌릴 수 없습니다. 정정이 필요하면 별도 정정 절차를 사용하세요.','warning');
+    return;
+  }
+
+  const allowed = {
+    conducted: new Set(['verified','rejected','canceled','conducted']),
+    verified: new Set(['conducted','verified']),
+    rejected: new Set(['conducted','rejected']),
+    canceled: new Set(['conducted','canceled']),
+    paid: new Set(['paid'])
+  };
+  if(!(allowed[currentStatus] || new Set()).has(newStatus)){
+    toast('허용되지 않는 검증 상태 변경입니다.','warning');
+    return;
+  }
+
   l.status = newStatus;
   if(newStatus==='verified'){
-    l.verifiedBy = db.cfg.confirmer || '학습상담사';
+    l.verifiedBy = db.cfg.confirmer || '담당 장학사';
     l.verifiedAt = Date.now();
     if(!l.amount) l.amount = calcLogAmount(l);
+  }else if(newStatus==='conducted'){
+    delete l.verifiedBy;
+    delete l.verifiedAt;
+  }else if(newStatus==='rejected'){
+    delete l.verifiedBy;
+    delete l.verifiedAt;
   }
+
   await save('mat', m);
-  loadVerify();
-  refreshDashboard();
+  if(typeof window.loadVerify==='function') window.loadVerify();
+  if(typeof refreshDashboard==='function') refreshDashboard();
 }
 
 async function bulkVerify(newStatus){
@@ -6383,19 +6409,35 @@ window.refreshDashboard = function(){
     const m = (db.mat || []).find(x => x.id === matId);
     const l = m ? (m.logs || []).find(x => x.id === logId) : null;
     if (!m || !l) { toast('실적 정보를 찾을 수 없습니다', 'danger'); return; }
+
     const canEdit = (l.status === 'conducted');
+    const realtimeNote = l.source === 'realtime'
+      ? '<div style="padding:8px;background:#eff6ff;border-radius:6px;font-size:12px;color:#1d4ed8">ℹ️ V14 연계 실적을 V13에서 수정하면 로컬 정정으로 기록됩니다. 같은 세션을 V14에서 다시 가져오면 원본 값으로 갱신될 수 있습니다.</div>'
+      : '';
+
     const bg = document.createElement('div');
     bg.className = 'modal-bg show';
-    bg.innerHTML = `<div class="modal" style="max-width:480px">
-      <div class="modal-header"><div class="modal-title">${canEdit ? '✏️ 실적 수정' : '🔍 실적 보기'}</div><button class="modal-close" onclick="this.closest('.modal-bg').remove()">×</button></div>
+    bg.innerHTML = `<div class="modal" style="max-width:560px">
+      <div class="modal-header"><div class="modal-title">${canEdit ? '✏️ 미검증 실적 수정' : '🔍 실적 보기'}</div><button class="modal-close" onclick="this.closest('.modal-bg').remove()">×</button></div>
       <div style="padding:16px; display:flex; flex-direction:column; gap:12px">
-        ${canEdit ? `<div style="padding:8px;background:#fef3c7;border-radius:6px;font-size:12px;color:#92400e">⚠️ 미검증 상태에서만 수정 가능합니다. 승인 후에는 수정되지 않습니다.</div>` : `<div style="padding:8px;background:#f1f5f9;border-radius:6px;font-size:12px;color:#64748b">🔒 이미 검증된 실적은 읽기 전용입니다.</div>`}
+        ${canEdit
+          ? '<div style="padding:8px;background:#fef3c7;border-radius:6px;font-size:12px;color:#92400e">⚠️ 미검증 상태에서 수정할 수 있습니다. 승인·반려된 실적은 먼저 검증화면에서 미검증으로 되돌린 뒤 수정하세요.</div>'
+          : '<div style="padding:8px;background:#f1f5f9;border-radius:6px;font-size:12px;color:#64748b">🔒 현재 상태에서는 읽기 전용입니다.</div>'}
+        ${realtimeNote}
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
-          <div class="form-group"><label>날짜 *</label><input type="date" id="edit-rec-date" value="${esc(l.date || '')}" ${canEdit ? '' : 'disabled'} style="width:100%;padding:8px;border:1px solid var(--border);border-radius:6px"></div>
-          <div class="form-group"><label>시간</label><input type="text" id="edit-rec-time" value="${esc(l.time || '')}" placeholder="14:00~15:00" ${canEdit ? '' : 'disabled'} style="width:100%;padding:8px;border:1px solid var(--border);border-radius:6px"></div>
+          <div class="form-group"><label>날짜 *</label><input type="date" id="edit-rec-date" value="${esc(l.date || l.d || '')}" ${canEdit ? '' : 'disabled'} style="width:100%;padding:8px;border:1px solid var(--border);border-radius:6px"></div>
+          <div class="form-group"><label>시간 *</label><input type="text" id="edit-rec-time" value="${esc(l.time || ((l.s&&l.e)?(l.s+'~'+l.e):''))}" placeholder="14:00~14:50" ${canEdit ? '' : 'disabled'} style="width:100%;padding:8px;border:1px solid var(--border);border-radius:6px"></div>
         </div>
-        <div class="form-group"><label>지도 내용</label><input type="text" id="edit-rec-topic" value="${esc(l.topic || l.content || '')}" ${canEdit ? '' : 'disabled'} style="width:100%;padding:8px;border:1px solid var(--border);border-radius:6px"></div>
-        <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:4px"><button class="btn btn-outline btn-sm" onclick="this.closest('.modal-bg').remove()">닫기</button>${canEdit ? `<button class="btn btn-primary btn-sm" onclick="saveEditRec('${matId}','${logId}',this)">💾 저장</button>` : ''}</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+          <div class="form-group"><label>활동시간(분)</label><input type="number" min="0" step="1" id="edit-rec-minutes" value="${esc(l.minutes ?? '')}" ${canEdit ? '' : 'disabled'} style="width:100%;padding:8px;border:1px solid var(--border);border-radius:6px"></div>
+          <div class="form-group"><label>장소</label><input type="text" id="edit-rec-place" value="${esc(l.place || '')}" ${canEdit ? '' : 'disabled'} style="width:100%;padding:8px;border:1px solid var(--border);border-radius:6px"></div>
+        </div>
+        <div class="form-group"><label>지도 주제</label><input type="text" id="edit-rec-topic" value="${esc(l.topic || '')}" ${canEdit ? '' : 'disabled'} style="width:100%;padding:8px;border:1px solid var(--border);border-radius:6px"></div>
+        <div class="form-group"><label>지도 내용</label><textarea id="edit-rec-content" rows="3" ${canEdit ? '' : 'disabled'} style="width:100%;padding:8px;border:1px solid var(--border);border-radius:6px;resize:vertical">${esc(l.content || '')}</textarea></div>
+        <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:4px">
+          <button class="btn btn-outline btn-sm" onclick="this.closest('.modal-bg').remove()">닫기</button>
+          ${canEdit ? `<button class="btn btn-primary btn-sm" onclick="saveEditRec('${matId}','${logId}',this)">💾 저장</button>` : ''}
+        </div>
       </div>
     </div>`;
     document.body.appendChild(bg);
@@ -6405,20 +6447,72 @@ window.refreshDashboard = function(){
     const m = (db.mat || []).find(x => x.id === matId);
     const l = m ? (m.logs || []).find(x => x.id === logId) : null;
     if (!m || !l) { toast('실적을 찾을 수 없습니다', 'danger'); return; }
-    if (l.status !== 'conducted') { toast('검증된 실적은 수정할 수 없습니다', 'warning'); return; }
-    const newDate  = (document.getElementById('edit-rec-date') || {}).value;
-    const newTime  = ((document.getElementById('edit-rec-time') || {}).value || '').trim();
+    if (l.status !== 'conducted') { toast('미검증 실적만 수정할 수 있습니다', 'warning'); return; }
+
+    const newDate = (document.getElementById('edit-rec-date') || {}).value;
+    const newTime = ((document.getElementById('edit-rec-time') || {}).value || '').trim();
+    const newMinutesRaw = ((document.getElementById('edit-rec-minutes') || {}).value || '').trim();
+    const newPlace = ((document.getElementById('edit-rec-place') || {}).value || '').trim();
     const newTopic = ((document.getElementById('edit-rec-topic') || {}).value || '').trim();
+    const newContent = ((document.getElementById('edit-rec-content') || {}).value || '').trim();
+
     if (!newDate) { toast('날짜는 필수입니다', 'warning'); return; }
-    l.date  = newDate; l.time = newTime; l.topic = newTopic || l.topic;
+
+    let minutes = newMinutesRaw === '' ? null : Number(newMinutesRaw);
+    if (minutes !== null && (!Number.isFinite(minutes) || minutes < 0)) {
+      toast('활동시간(분)은 0 이상의 숫자여야 합니다', 'warning');
+      return;
+    }
+
+    let parsedStart = '', parsedEnd = '';
+    if (newTime) {
+      const mt = newTime.match(/^\s*(\d{1,2}):(\d{2})\s*[~\-]\s*(\d{1,2}):(\d{2})\s*$/);
+      if (!mt) {
+        toast('시간은 14:00~14:50 형식으로 입력해 주세요', 'warning');
+        return;
+      }
+      const sh=Number(mt[1]), sm=Number(mt[2]), eh=Number(mt[3]), em=Number(mt[4]);
+      if(sh>23||eh>23||sm>59||em>59){
+        toast('올바른 시각을 입력해 주세요', 'warning');
+        return;
+      }
+      const startMin=sh*60+sm, endMin=eh*60+em;
+      if(endMin<=startMin){
+        toast('종료시간은 시작시간보다 늦어야 합니다', 'warning');
+        return;
+      }
+      parsedStart=String(sh).padStart(2,'0')+':'+String(sm).padStart(2,'0');
+      parsedEnd=String(eh).padStart(2,'0')+':'+String(em).padStart(2,'0');
+      minutes=endMin-startMin;
+    }
+
+    l.date = newDate;
+    l.d = newDate;
+    l.time = newTime;
+    if(parsedStart && parsedEnd){
+      l.s = parsedStart;
+      l.e = parsedEnd;
+    }
+    if(minutes !== null) l.minutes = minutes;
+    l.place = newPlace;
+    l.topic = newTopic;
+    l.content = newContent || newTopic;
+    l.editedAt = Date.now();
+    l.editedBy = (db.cfg && db.cfg.confirmer) || '담당자';
+    l.editSource = 'v13-validation';
+    if(l.source === 'realtime') l.localOverride = true;
+
     if (typeof calcLogAmount === 'function') l.amount = calcLogAmount(l);
     if (typeof save === 'function') await save('mat', m);
+
     btn.closest('.modal-bg').remove();
-    toast('수정되었습니다', 'success');
-    loadStfRecord();
+    toast('미검증 실적을 수정했습니다', 'success');
+    if (typeof window.loadVerify === 'function') window.loadVerify();
+    try { if (typeof window.loadStfRecord === 'function') window.loadStfRecord(); } catch(e){}
+    if (typeof refreshDashboard === 'function') refreshDashboard();
   };
 
-  window.deleteRec = async function(matId, logId) {
+    window.deleteRec = async function(matId, logId) {
     const m = (db.mat || []).find(x => x.id === matId);
     const l = m ? (m.logs || []).find(x => x.id === logId) : null;
     if (!m || !l) return;
@@ -6568,9 +6662,15 @@ window.refreshDashboard = function(){
           rowsHtml += `<tr><td colspan="9" style="background:#f8fafc; font-weight:700; color:#334155; padding:6px 12px">── ${esc(l.date)} (${['일','월','화','수','목','금','토'][new Date(l.date).getDay()]}요일) ──</td></tr>`;
         }
         let actionHtml = '';
-        if (isScheduled) actionHtml = `<button class="btn btn-xs btn-primary" onclick="openQuickRecFromVerify('${m.id}','${l.date}','${l.time}')">+ 실적 등록</button>`;
-        else if (s === 'conducted') actionHtml = `<button class="btn btn-xs btn-outline" onclick="openEditRecModal('${m.id}','${l.id}')">✏️</button> <button class="btn btn-xs btn-success" onclick="verifyOne('${m.id}','${l.id}','verified')">승인</button> <button class="btn btn-xs btn-danger" onclick="verifyOne('${m.id}','${l.id}','rejected')">반려</button>`;
-        else actionHtml = `<button class="btn btn-xs btn-outline" onclick="verifyOne('${m.id}','${l.id}','conducted')">되돌림</button>`;
+        if (isScheduled) {
+          actionHtml = `<button class="btn btn-xs btn-primary" onclick="openQuickRecFromVerify('${m.id}','${l.date}','${l.time}')">+ 실적 등록</button>`;
+        } else if (s === 'conducted') {
+          actionHtml = `<button class="btn btn-xs btn-outline" onclick="openEditRecModal('${m.id}','${l.id}')">✏️ 수정</button> <button class="btn btn-xs btn-success" onclick="verifyOne('${m.id}','${l.id}','verified')">승인</button> <button class="btn btn-xs btn-danger" onclick="verifyOne('${m.id}','${l.id}','rejected')">반려</button>`;
+        } else if (s === 'paid') {
+          actionHtml = '<span class="badge" style="background:#e5e7eb;color:#4b5563">🔒 지급완료 잠금</span>';
+        } else {
+          actionHtml = `<button class="btn btn-xs btn-outline" onclick="verifyOne('${m.id}','${l.id}','conducted')">↩ 미검증으로</button>`;
+        }
         const chkHtml = l.id ? `<input type="checkbox" class="ver-chk-${sid}" data-mat="${m.id}" data-log="${l.id}">` : `<input type="checkbox" disabled title="실적 미입력">`;
         rowsHtml += `<tr style="${isScheduled ? 'opacity:0.5' : ''}"><td class="center">${chkHtml}</td><td>${esc(l.date || '')}</td><td>${esc(subject)}</td><td>${kindLbl}</td><td>${esc(l.time || '')}</td><td style="font-size:12px">${esc(l.topic || l.content || (isScheduled ? '(미입력)' : ''))}</td><td class="ar">${amt}</td><td><span class="badge ${stColor}" style="${s==='scheduled'?'background:#e5e7eb;color:#6b7280':''}">${stLbl}</span></td><td>${actionHtml}</td></tr>`;
       });
