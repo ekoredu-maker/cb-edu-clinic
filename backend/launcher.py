@@ -1,16 +1,16 @@
 from __future__ import annotations
 
+import ctypes
 import json
+import os
 import socket
 import sys
 import threading
 import time
+import traceback
+import webbrowser
+from pathlib import Path
 from urllib.request import Request, urlopen
-
-import uvicorn
-import webview
-
-from app import app
 
 
 def find_free_port() -> int:
@@ -19,8 +19,20 @@ def find_free_port() -> int:
         return int(sock.getsockname()[1])
 
 
-def run_api(port: int) -> None:
-    uvicorn.run(app, host="127.0.0.1", port=port, log_level="warning", access_log=False)
+def _load_api():
+    import uvicorn
+    from app import app
+    return uvicorn, app
+
+
+def run_api(port: int, uvicorn_module, app_object) -> None:
+    uvicorn_module.run(
+        app_object,
+        host="127.0.0.1",
+        port=port,
+        log_level="warning",
+        access_log=False,
+    )
 
 
 def wait_until_ready(base_url: str, timeout: float = 12.0) -> None:
@@ -38,8 +50,14 @@ def wait_until_ready(base_url: str, timeout: float = 12.0) -> None:
 
 
 def start_engine() -> str:
+    uvicorn_module, app_object = _load_api()
     port = find_free_port()
-    threading.Thread(target=run_api, args=(port,), daemon=True, name="clinic-api").start()
+    threading.Thread(
+        target=run_api,
+        args=(port, uvicorn_module, app_object),
+        daemon=True,
+        name="clinic-api",
+    ).start()
     base_url = f"http://127.0.0.1:{port}"
     wait_until_ready(base_url)
     return base_url
@@ -154,11 +172,55 @@ def self_test() -> int:
     return 0
 
 
-def main() -> None:
-    if "--self-test" in sys.argv:
-        raise SystemExit(self_test())
+def startup_log_path() -> Path:
+    try:
+        from runtime_paths import user_data_dir
+        root = user_data_dir()
+    except Exception:
+        root = Path.cwd() / "data"
+        root.mkdir(parents=True, exist_ok=True)
+    return root / "startup_error.log"
 
+
+def report_startup_error(exc: BaseException) -> None:
+    message = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
+    path = startup_log_path()
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(message, encoding="utf-8")
+    except Exception:
+        pass
+
+    if os.name == "nt":
+        try:
+            ctypes.windll.user32.MessageBoxW(
+                0,
+                "학습클리닉 실행에 실패했습니다.\n\n"
+                f"오류 기록: {path}\n\n"
+                "같은 폴더의 '실행_브라우저모드.cmd'를 사용해 보세요.",
+                "학습클리닉 V13 실행 오류",
+                0x10,
+            )
+        except Exception:
+            pass
+
+
+def run_browser_mode() -> None:
     base_url = start_engine()
+    print(f"[학습클리닉] Python 업무엔진: {base_url}")
+    print("[학습클리닉] 브라우저 창을 닫은 뒤 이 콘솔에서 Ctrl+C를 누르면 종료됩니다.")
+    webbrowser.open(base_url, new=1, autoraise=True)
+    try:
+        while True:
+            time.sleep(1.0)
+    except KeyboardInterrupt:
+        return
+
+
+def run_window_mode() -> None:
+    base_url = start_engine()
+    import webview
+
     webview.create_window(
         "충북종합학습클리닉 업무관리 프로그램",
         url=f"{base_url}/",
@@ -170,5 +232,20 @@ def main() -> None:
     webview.start(debug=False)
 
 
+def main() -> None:
+    if "--self-test" in sys.argv:
+        raise SystemExit(self_test())
+    if "--browser" in sys.argv:
+        run_browser_mode()
+        return
+    run_window_mode()
+
+
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except SystemExit:
+        raise
+    except BaseException as exc:
+        report_startup_error(exc)
+        raise
