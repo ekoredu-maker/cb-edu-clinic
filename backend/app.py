@@ -22,6 +22,7 @@ from database.state_store import (
 from domain.statistics import build_statistics
 from domain.verification import verify_records
 from domain.settlement import build_settlement
+from domain.realtime_projection import project_realtime_sessions
 from runtime_paths import frontend_root, generated_dir, template_dir
 from services.document_context import execution_context, settlement_context
 from services.document_model import (
@@ -209,6 +210,17 @@ def verification(payload: dict) -> dict:
 @app.post("/api/settlement")
 def settlement(payload: dict) -> dict:
     return build_settlement(payload)
+
+
+@app.post("/api/realtime/project")
+def realtime_project(payload: dict) -> dict:
+    state = payload.get("state")
+    sessions = payload.get("sessions")
+    if not isinstance(state, dict):
+        raise HTTPException(status_code=400, detail="state가 필요합니다.")
+    if not isinstance(sessions, list):
+        raise HTTPException(status_code=400, detail="sessions 배열이 필요합니다.")
+    return project_realtime_sessions(state, sessions)
 
 
 @app.post("/api/export/pay-slip.xlsx")
