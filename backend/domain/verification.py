@@ -21,6 +21,29 @@ def _to_minutes(value: str | None) -> int | None:
         return None
 
 
+def _log_date(log: dict[str, Any]) -> str:
+    """V12 legacy(d)와 V13/V14(date)를 모두 허용한다."""
+    return str(log.get("date") or log.get("d") or "")
+
+
+def _log_hours(log: dict[str, Any]) -> float:
+    """실제 시작/종료가 있으면 우선 사용하고, 없으면 minutes를 사용한다."""
+    start = _to_minutes(log.get("s"))
+    end = _to_minutes(log.get("e"))
+    if start is not None and end is not None and end > start:
+        return (end - start) / 60
+
+    minutes = log.get("minutes")
+    if minutes not in (None, ""):
+        try:
+            return max(0.0, float(minutes) / 60)
+        except (TypeError, ValueError):
+            pass
+
+    # 과거 로그 호환: 시간 정보가 전혀 없던 기존 1회 활동은 1시간으로 간주한다.
+    return 1.0
+
+
 def dates_for_day_in_month(ym: str, day_label: str) -> list[str]:
     target = DAY_INDEX.get(day_label)
     if target is None:
@@ -55,15 +78,8 @@ def build_monthly_verification(state: dict[str, Any], ym: str) -> list[dict[str,
 
         slot = (matching.get("slots") or [None])[0]
         expected = len(dates_for_day_in_month(ym, (slot or {}).get("d"))) if slot else 0
-        logs = [x for x in (matching.get("logs") or []) if str(x.get("d") or "").startswith(ym)]
-        total_hours = 0.0
-        for log in logs:
-            start = _to_minutes(log.get("s"))
-            end = _to_minutes(log.get("e"))
-            if start is not None and end is not None:
-                total_hours += (end - start) / 60
-            else:
-                total_hours += 1
+        logs = [x for x in (matching.get("logs") or []) if _log_date(x).startswith(ym)]
+        total_hours = sum(_log_hours(log) for log in logs)
 
         rows.append({
             "matchingId": matching.get("id"),
@@ -109,6 +125,19 @@ def verify_records(payload: dict[str, Any]) -> dict[str, Any]:
                     "code": "INVALID_TIME_RANGE",
                     "message": "활동 종료시각은 시작시각보다 늦어야 합니다.",
                 })
+
+            minutes = log.get("minutes")
+            if minutes not in (None, ""):
+                try:
+                    if float(minutes) < 0:
+                        raise ValueError
+                except (TypeError, ValueError):
+                    errors.append({
+                        "matchingIndex": matching_index,
+                        "logIndex": log_index,
+                        "code": "INVALID_MINUTES",
+                        "message": "활동시간(분)은 0 이상의 숫자여야 합니다.",
+                    })
 
     monthly = build_monthly_verification(state, ym) if ym else []
     return {
