@@ -1,5 +1,5 @@
-const CACHE='clinic-realtime-v14-3';
-const ASSETS=['./','./index.html','./app.js?v=14.3','./config.js?v=14.3','./manifest.webmanifest'];
+const CACHE='clinic-realtime-v14-4';
+const ASSETS=['./','./index.html','./app.js?v=14.4','./config.js?v=14.4','./manifest.webmanifest'];
 
 self.addEventListener('install',event=>{
   self.skipWaiting();
