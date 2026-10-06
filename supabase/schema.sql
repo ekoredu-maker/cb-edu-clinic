@@ -1234,3 +1234,234 @@ grant execute on function public.approve_session_payment(uuid) to authenticated;
 revoke update on public.sessions from authenticated;
 grant update (verification_state, verification_reason, settlement_state)
   on public.sessions to authenticated;
+
+
+-- ---------- V14.5 Kakao/offline invitation ----------
+create sequence if not exists public.supporter_mobile_id_seq start with 2 increment by 1;
+
+create table if not exists public.supporter_invitations (
+  id uuid primary key default gen_random_uuid(),
+  invitee_name text not null,
+  email text not null,
+  invite_token_hash text not null unique,
+  approval_code_hash text not null,
+  status text not null default 'pending'
+    check (status in ('pending','redeemed','revoked','expired','locked')),
+  expires_at timestamptz not null,
+  max_attempts integer not null default 5 check (max_attempts between 1 and 10),
+  failed_attempts integer not null default 0 check (failed_attempts >= 0),
+  last_attempt_at timestamptz,
+  created_by uuid not null references public.profiles(id),
+  created_at timestamptz not null default now(),
+  redeemed_at timestamptz,
+  redeemed_user_id uuid references auth.users(id)
+);
+
+create index if not exists supporter_invitations_status_idx
+  on public.supporter_invitations(status, expires_at);
+create index if not exists supporter_invitations_email_idx
+  on public.supporter_invitations(lower(email));
+
+alter table public.supporter_invitations enable row level security;
+
+drop policy if exists supporter_invitations_select on public.supporter_invitations;
+create policy supporter_invitations_select
+on public.supporter_invitations
+for select
+to authenticated
+using (private.has_role('admin') or private.has_role('supervisor'));
+
+drop policy if exists supporter_invitations_insert on public.supporter_invitations;
+create policy supporter_invitations_insert
+on public.supporter_invitations
+for insert
+to authenticated
+with check (
+  (private.has_role('admin') or private.has_role('supervisor'))
+  and created_by = (select auth.uid())
+);
+
+drop policy if exists supporter_invitations_update on public.supporter_invitations;
+create policy supporter_invitations_update
+on public.supporter_invitations
+for update
+to authenticated
+using (private.has_role('admin') or private.has_role('supervisor'))
+with check (private.has_role('admin') or private.has_role('supervisor'));
+
+grant select, insert, update on public.supporter_invitations to authenticated;
+revoke all on public.supporter_invitations from anon;
+
+create or replace function public.create_supporter_invitation(
+  p_name text,
+  p_email text,
+  p_expires_hours integer default 48
+)
+returns table(
+  invitation_id uuid,
+  invite_token text,
+  approval_code text,
+  expires_at timestamptz
+)
+language plpgsql
+security invoker
+set search_path = public, private, extensions, pg_temp
+as $$
+declare
+  v_name text := btrim(coalesce(p_name,''));
+  v_email text := lower(btrim(coalesce(p_email,'')));
+  v_token text;
+  v_code text;
+  v_id uuid;
+  v_expires timestamptz;
+begin
+  if (select auth.uid()) is null then
+    raise exception '로그인이 필요합니다.';
+  end if;
+  if not (private.has_role('admin') or private.has_role('supervisor')) then
+    raise exception '초대 생성 권한이 없습니다.';
+  end if;
+  if length(v_name) < 2 then
+    raise exception '이름을 확인해 주세요.';
+  end if;
+  if v_email !~ '^[^@[:space:]]+@[^@[:space:]]+\.[^@[:space:]]+$' then
+    raise exception '이메일 형식을 확인해 주세요.';
+  end if;
+  if p_expires_hours is null or p_expires_hours < 1 or p_expires_hours > 168 then
+    raise exception '유효시간은 1~168시간 범위여야 합니다.';
+  end if;
+
+  update public.supporter_invitations
+  set status='revoked'
+  where lower(email)=v_email
+    and status='pending';
+
+  v_token := encode(extensions.gen_random_bytes(24),'hex');
+  v_code := lpad((floor(random()*1000000))::integer::text,6,'0');
+  v_expires := now() + make_interval(hours => p_expires_hours);
+
+  insert into public.supporter_invitations(
+    invitee_name,email,invite_token_hash,approval_code_hash,status,
+    expires_at,max_attempts,failed_attempts,created_by
+  )
+  values(
+    v_name,
+    v_email,
+    encode(extensions.digest(v_token,'sha256'),'hex'),
+    encode(extensions.digest(v_code,'sha256'),'hex'),
+    'pending',
+    v_expires,
+    5,
+    0,
+    (select auth.uid())
+  )
+  returning id into v_id;
+
+  return query
+  select v_id, v_token, v_code, v_expires;
+end;
+$$;
+
+revoke all on function public.create_supporter_invitation(text,text,integer)
+  from public, anon;
+grant execute on function public.create_supporter_invitation(text,text,integer)
+  to authenticated;
+
+create or replace function public.complete_supporter_invitation(
+  p_invitation_id uuid,
+  p_user_id uuid
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, auth, pg_temp
+as $$
+declare
+  v_inv public.supporter_invitations;
+  v_email text;
+  v_mobile_id text;
+begin
+  select * into v_inv
+  from public.supporter_invitations
+  where id=p_invitation_id
+  for update;
+
+  if v_inv.id is null then raise exception '초대를 찾을 수 없습니다.'; end if;
+  if v_inv.status <> 'pending' then raise exception '사용할 수 없는 초대입니다.'; end if;
+
+  if v_inv.expires_at <= now() then
+    update public.supporter_invitations set status='expired' where id=v_inv.id;
+    raise exception '초대 유효시간이 만료되었습니다.';
+  end if;
+
+  select lower(email) into v_email
+  from auth.users
+  where id=p_user_id;
+
+  if v_email is null or v_email <> lower(v_inv.email) then
+    raise exception '초대 이메일과 계정 이메일이 일치하지 않습니다.';
+  end if;
+
+  v_mobile_id := 'JCEC-LS-' || to_char(now() at time zone 'Asia/Seoul','YYYY')
+    || '-' || lpad(nextval('public.supporter_mobile_id_seq')::text,4,'0');
+
+  update public.profiles
+  set display_name=v_inv.invitee_name,
+      roles=array['supporter']::text[],
+      active=true,
+      identity_verified=true,
+      identity_verified_at=now(),
+      mobile_id_no=coalesce(mobile_id_no,v_mobile_id),
+      mobile_id_issued_at=coalesce(mobile_id_issued_at,now()),
+      mobile_id_active=true,
+      updated_at=now()
+  where id=p_user_id;
+
+  if not found then
+    raise exception '사용자 프로필을 찾을 수 없습니다.';
+  end if;
+
+  update public.supporter_invitations
+  set status='redeemed',
+      redeemed_at=now(),
+      redeemed_user_id=p_user_id,
+      last_attempt_at=now()
+  where id=v_inv.id;
+
+  return jsonb_build_object(
+    'ok',true,
+    'user_id',p_user_id,
+    'mobile_id_no',(select mobile_id_no from public.profiles where id=p_user_id)
+  );
+end;
+$$;
+
+revoke all on function public.complete_supporter_invitation(uuid,uuid)
+  from public, anon, authenticated;
+grant execute on function public.complete_supporter_invitation(uuid,uuid)
+  to service_role;
+
+create or replace function private.handle_new_user()
+returns trigger
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+begin
+  insert into public.profiles(id, display_name, roles, active)
+  values (
+    new.id,
+    coalesce(
+      nullif(new.raw_user_meta_data ->> 'display_name',''),
+      split_part(coalesce(new.email,''),'@',1),
+      '사용자'
+    ),
+    array['supporter']::text[],
+    false
+  )
+  on conflict (id) do nothing;
+  return new;
+end;
+$$;
+
+revoke all on function private.handle_new_user() from public;
