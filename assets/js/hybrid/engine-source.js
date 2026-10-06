@@ -11,11 +11,16 @@ const cache = {
 function clone(v){ return v == null ? v : structuredClone(v); }
 function state(){ return getState(); }
 
-async function statistics(force=false){
+async function statistics(force=false, options={}){
   if (!PythonBridge.isAvailable()) return null;
-  if (!force && cache.statistics) return clone(cache.statistics);
-  const result = await PythonBridge.statistics({ state: state() });
-  cache.statistics = result;
+  const key = JSON.stringify({asOf: options.asOf || '', reportType: options.reportType || ''});
+  if (!force && cache.statistics?.key === key) return clone(cache.statistics.value);
+  const result = await PythonBridge.statistics({
+    state: state(),
+    asOf: options.asOf || '',
+    reportType: options.reportType || '',
+  });
+  cache.statistics = { key, value: result };
   cache.updatedAt = new Date().toISOString();
   return clone(result);
 }
@@ -49,7 +54,7 @@ function snapshot(){
   return {
     available: PythonBridge.isAvailable(),
     authoritative: PythonBridge.isAvailable(),
-    statisticsReady: Boolean(cache.statistics),
+    statisticsReady: Boolean(cache.statistics?.value),
     verificationMonths: [...cache.verification.keys()],
     settlementMonths: [...cache.settlement.keys()],
     updatedAt: cache.updatedAt,
