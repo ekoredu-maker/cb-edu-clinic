@@ -1,0 +1,203 @@
+name: V13 Verification Edit Smoke
+
+on:
+  pull_request:
+    paths:
+      - 'assets/js/app.js'
+      - '.github/workflows/v13-verification-edit-smoke.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'assets/js/app.js'
+      - '.github/workflows/v13-verification-edit-smoke.yml'
+  workflow_dispatch:
+
+jobs:
+  verification-edit-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Playwright
+        run: |
+          npm install --no-save playwright@1.56.1
+          npx playwright install --with-deps chromium
+
+      - name: Start static server
+        run: |
+          python3 -m http.server 4173 > /tmp/clinic-http.log 2>&1 &
+          for i in {1..30}; do
+            curl -fsS http://127.0.0.1:4173/ >/dev/null && exit 0
+            sleep 1
+          done
+          cat /tmp/clinic-http.log
+          exit 1
+
+      - name: Verify unverified edit and state transitions
+        run: |
+          node <<'NODE'
+          const { chromium } = require('playwright');
+
+          (async()=>{
+            const browser=await chromium.launch({headless:true});
+            const context=await browser.newContext({
+              viewport:{width:1440,height:900},
+              serviceWorkers:'block'
+            });
+            const page=await context.newPage();
+            const errors=[];
+            page.on('pageerror', e=>errors.push(String(e)));
+
+            await page.route('https://cdn.jsdelivr.net/npm/chart.js/**', route => route.fulfill({
+              status:200,
+              contentType:'application/javascript',
+              body:'window.Chart=class Chart{constructor(){} destroy(){} static getChart(){return null;}};'
+            }));
+            await page.route('https://cdnjs.cloudflare.com/ajax/libs/xlsx/**', route => route.fulfill({
+              status:200,
+              contentType:'application/javascript',
+              body:'window.XLSX=window.XLSX||{};'
+            }));
+            await page.route('https://cdn.jsdelivr.net/gh/orioncactus/**', route => route.fulfill({
+              status:200,
+              contentType:'text/css',
+              body:''
+            }));
+            await page.route('**/api/health', route => route.fulfill({
+              status:503,
+              contentType:'application/json',
+              body:JSON.stringify({detail:'browser smoke'})
+            }));
+
+            await page.goto('http://127.0.0.1:4173/?verification-edit-smoke=1',{
+              waitUntil:'domcontentloaded',
+              timeout:30000
+            });
+
+            await page.locator('#login-pw').fill('1111');
+            await page.getByRole('button',{name:'로그인',exact:true}).click();
+            await page.locator('#app-header').waitFor({state:'visible',timeout:10000});
+
+            await page.evaluate(async()=>{
+              const state=window.__V13_GET_BROWSER_STATE__();
+              state.cfg={...state.cfg,org:'테스트',confirmer:'검증담당자',rateCoach:40000,rateClass:30000,taxPct:3.3};
+              state.stf=[{id:'stf-edit',nm:'지원단A',st:'active'}];
+              state.stu=[{id:'stu-edit',nm:'학생A',sc:'테스트초',scType:'초',gr:4,cls:1}];
+              state.mat=[{
+                id:'mat-edit',
+                stfId:'stf-edit',
+                stuId:'stu-edit',
+                kind:'coach',
+                st:'active',
+                slots:[{d:'화',s:'14:00',e:'14:50'}],
+                logs:[{
+                  id:'log-edit',
+                  date:'2026-10-06',
+                  d:'2026-10-06',
+                  time:'14:00~14:50',
+                  s:'14:00',
+                  e:'14:50',
+                  minutes:50,
+                  topic:'수정 전 주제',
+                  content:'수정 전 내용',
+                  place:'기존실',
+                  status:'conducted',
+                  kind:'coach',
+                  amount:40000,
+                  source:'realtime'
+                }]
+              }];
+              state.trn=[];
+              await window.__V13_APPLY_PROJECTED_STATE__(state);
+              window.goTab('t5',null);
+              document.getElementById('ver-month').value='2026-10';
+              document.getElementById('ver-filter').value='pending';
+              window.loadVerify();
+            });
+
+            const row=page.locator('tr').filter({hasText:'수정 전 주제'});
+            await row.getByRole('button',{name:'✏️ 수정'}).click();
+            await page.locator('#edit-rec-time').fill('14:10~14:55');
+            await page.locator('#edit-rec-place').fill('수정실');
+            await page.locator('#edit-rec-topic').fill('수정 후 주제');
+            await page.locator('#edit-rec-content').fill('수정 후 상세 내용');
+            await page.getByRole('button',{name:'💾 저장'}).click();
+
+            const editedRow=page.locator('tr').filter({hasText:'수정 후 주제'});
+            await editedRow.waitFor({state:'visible'});
+            await editedRow.getByText('14:10~14:55',{exact:true}).waitFor({state:'visible'});
+
+            let saved=await page.evaluate(()=>{
+              const l=window.__V13_GET_BROWSER_STATE__().mat[0].logs[0];
+              return {status:l.status,minutes:l.minutes,place:l.place,topic:l.topic,content:l.content,localOverride:l.localOverride};
+            });
+            if(saved.status!=='conducted'||saved.minutes!==45||saved.place!=='수정실'||saved.topic!=='수정 후 주제'||saved.content!=='수정 후 상세 내용'||saved.localOverride!==true){
+              throw new Error('Edited state mismatch: '+JSON.stringify(saved));
+            }
+
+            await page.evaluate(()=>{
+              document.getElementById('ver-filter').value='all';
+              window.loadVerify();
+            });
+            const approvalRow=page.locator('tr').filter({hasText:'수정 후 주제'});
+            await approvalRow.getByRole('button',{name:'승인',exact:true}).click();
+            await page.getByText('✅승인',{exact:true}).waitFor({state:'visible'});
+
+            let approved=await page.evaluate(()=>{
+              const l=window.__V13_GET_BROWSER_STATE__().mat[0].logs[0];
+              return {status:l.status,verifiedBy:l.verifiedBy,hasVerifiedAt:!!l.verifiedAt};
+            });
+            if(approved.status!=='verified'||approved.verifiedBy!=='검증담당자'||!approved.hasVerifiedAt){
+              throw new Error('Approval state mismatch: '+JSON.stringify(approved));
+            }
+
+            await page.getByRole('button',{name:'↩ 미검증으로'}).click();
+            await page.getByText('미검증',{exact:true}).waitFor({state:'visible'});
+            await page.getByRole('button',{name:'✏️ 수정'}).waitFor({state:'visible'});
+
+            let reverted=await page.evaluate(()=>{
+              const l=window.__V13_GET_BROWSER_STATE__().mat[0].logs[0];
+              return {status:l.status,verifiedBy:l.verifiedBy||null,verifiedAt:l.verifiedAt||null};
+            });
+            if(reverted.status!=='conducted'||reverted.verifiedBy!==null||reverted.verifiedAt!==null){
+              throw new Error('Rollback metadata was not cleared: '+JSON.stringify(reverted));
+            }
+
+            await page.evaluate(async()=>{
+              const state=window.__V13_GET_BROWSER_STATE__();
+              state.mat[0].logs[0].status='paid';
+              await window.__V13_APPLY_PROJECTED_STATE__(state);
+              document.getElementById('ver-month').value='2026-10';
+              document.getElementById('ver-filter').value='all';
+              window.loadVerify();
+            });
+
+            const paidRow=page.locator('tr').filter({hasText:'수정 후 주제'});
+            await paidRow.getByText('지급완료',{exact:false}).waitFor({state:'visible'});
+            await paidRow.getByText('지급완료 잠금',{exact:false}).waitFor({state:'visible'});
+            if(await paidRow.getByRole('button',{name:'↩ 미검증으로'}).count()){
+              throw new Error('Paid record unexpectedly allows rollback.');
+            }
+
+            await page.screenshot({path:'/tmp/v13-verification-edit.png',fullPage:true});
+            if(errors.length) throw new Error(errors.join(' | '));
+            await browser.close();
+            console.log('V13 verification edit smoke passed.');
+          })().catch(e=>{
+            console.error(e);
+            process.exit(1);
+          });
+          NODE
+
+      - name: Upload screenshot
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: v13-verification-edit-smoke
+          path: /tmp/v13-verification-edit.png
+          if-no-files-found: ignore
