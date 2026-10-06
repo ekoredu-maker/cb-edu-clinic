@@ -520,11 +520,15 @@ async function setSchoolCurrentLocation(schoolId,schoolName){
       renderPage();
       return;
     }
-    const {error}=await state.client.from('schools')
-      .update({latitude:loc.latitude,longitude:loc.longitude})
-      .eq('id',schoolId);
+    const {data,error}=await state.client.rpc('set_school_baseline_location',{
+      p_school_id:schoolId,
+      p_latitude:loc.latitude,
+      p_longitude:loc.longitude,
+      p_accuracy_m:loc.accuracy
+    });
     if(error) throw error;
-    toast('학교 기준 위치를 등록했습니다.');
+    if(!data?.registered) throw new Error('학교 기준 위치 저장을 확인하지 못했습니다.');
+    toast('학교 기준 위치 저장을 확인했습니다.');
     renderPage();
   }catch(e){
     toast(e.message||String(e));
@@ -583,6 +587,18 @@ async function requestScheduleChange(planId){
   const {error}=await state.client.from('change_requests').insert({requester_id:state.user.id,assignment_id:plan?.assignment_id||null,schedule_plan_id:planId,request_type:'schedule',reason});
   if(error){toast(error.message);return;}toast('변경요청을 등록했습니다.');
 }
+async function reverifySession(id){
+  if(state.demo){
+    const s=DEMO.sessions.find(x=>x.id===id);
+    if(s){s.verification_state='auto_verified';s.verification_reason='관리자 재검증: 자동검증 통과';}
+    await refreshData();renderPage();return;
+  }
+  const {data,error}=await state.client.rpc('reverify_session',{p_session_id:id});
+  if(error){toast(error.message);return;}
+  await refreshData();
+  toast(data==='auto_verified'?'자동 재검증을 통과했습니다.':'재검증 결과 확인이 필요합니다.');
+  renderPage();
+}
 async function confirmSession(id){
   if(state.demo){const s=DEMO.sessions.find(x=>x.id===id);if(s)s.verification_state='confirmed';await refreshData();renderPage();return;}
   const {error}=await state.client.from('sessions').update({verification_state:'confirmed',verification_reason:'담당자 확인 완료'}).eq('id',id);
@@ -596,7 +612,7 @@ async function rejectSession(id){
 }
 async function approveSession(id){
   if(state.demo){const s=DEMO.sessions.find(x=>x.id===id);if(s)s.settlement_state='approved';await refreshData();renderPage();return;}
-  const {error}=await state.client.from('sessions').update({settlement_state:'approved'}).eq('id',id);
+  const {error}=await state.client.rpc('approve_session_payment',{p_session_id:id});
   if(error){toast(error.message);return;}await refreshData();renderPage();
 }
 async function approveAll(){
@@ -604,13 +620,16 @@ async function approveAll(){
   if(!ids.length)return;
   if(!confirm(ids.length+'건을 지급 승인하시겠습니까?'))return;
   if(state.demo){DEMO.sessions.forEach(s=>{if(ids.includes(s.id))s.settlement_state='approved';});await refreshData();renderPage();return;}
-  const {error}=await state.client.from('sessions').update({settlement_state:'approved'}).in('id',ids);
-  if(error){toast(error.message);return;}await refreshData();toast('지급 승인이 완료되었습니다.');renderPage();
+  for(const id of ids){
+    const {error}=await state.client.rpc('approve_session_payment',{p_session_id:id});
+    if(error){toast(error.message);return;}
+  }
+  await refreshData();toast('지급 승인이 완료되었습니다.');renderPage();
 }
 
 window.signIn=signIn; window.signOut=signOut; window.switchRole=switchRole; window.go=go;
 window.startLesson=startLesson; window.endLesson=endLesson; window.saveLessonRecord=saveLessonRecord; window.setSchoolCurrentLocation=setSchoolCurrentLocation;
 window.addCounseling=addCounseling; window.requestScheduleChange=requestScheduleChange;
-window.confirmSession=confirmSession; window.rejectSession=rejectSession; window.approveSession=approveSession; window.approveAll=approveAll;
+window.reverifySession=reverifySession; window.confirmSession=confirmSession; window.rejectSession=rejectSession; window.approveSession=approveSession; window.approveAll=approveAll;
 
 init().catch(e=>{$app.innerHTML='<div class="login"><h2>초기화 오류</h2><p>'+esc(e.message||e)+'</p></div>';});
