@@ -146,6 +146,7 @@ async function init(){
     state.requests=DEMO.requests;
     state.settings=DEMO.settings;
     state.role=localStorage.getItem('clinic-demo-role') || 'supporter';
+    await refreshData();
     renderShell();
     return;
   }
@@ -341,6 +342,8 @@ function subscribeRealtime(){
   if(state.realtime) state.client.removeChannel(state.realtime);
   state.realtime=state.client.channel('v14-ops')
     .on('postgres_changes',{event:'*',schema:'public',table:'sessions'},async()=>{await refreshData();renderPage();})
+    .on('postgres_changes',{event:'*',schema:'public',table:'assignments'},async()=>{await refreshData();renderPage();})
+    .on('postgres_changes',{event:'*',schema:'public',table:'students'},async()=>{await refreshData();renderPage();})
     .on('postgres_changes',{event:'*',schema:'public',table:'notices'},async()=>{await refreshData();renderPage();})
     .subscribe();
 }
