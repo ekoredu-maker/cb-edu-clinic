@@ -1473,3 +1473,174 @@ end;
 $$;
 
 revoke all on function private.handle_new_user() from public;
+
+
+-- ---------- V14 student roster import ----------
+alter table public.students
+  add column if not exists preferred_support_type text;
+
+do $$
+begin
+  if not exists (
+    select 1 from pg_constraint
+    where conrelid='public.students'::regclass
+      and conname='students_preferred_support_type_check'
+  ) then
+    alter table public.students
+      add constraint students_preferred_support_type_check
+      check (
+        preferred_support_type is null
+        or preferred_support_type in ('coach','class','counseling')
+      );
+  end if;
+
+  if not exists (
+    select 1 from pg_constraint
+    where conrelid='public.students'::regclass
+      and conname='students_school_type_check'
+  ) then
+    alter table public.students
+      add constraint students_school_type_check
+      check (
+        school_type is null
+        or school_type in ('초','중','고','특수','기타')
+      );
+  end if;
+end $$;
+
+create unique index if not exists students_legacy_student_id_uq
+  on public.students(legacy_student_id)
+  where legacy_student_id is not null;
+
+create or replace function public.bulk_register_students(p_rows jsonb)
+returns jsonb
+language plpgsql
+security invoker
+set search_path = public, private, pg_temp
+as $$
+declare
+  v_actor uuid := (select auth.uid());
+  v_item jsonb;
+  v_school_id uuid;
+  v_name text;
+  v_alias text;
+  v_school_type text;
+  v_grade integer;
+  v_class_no integer;
+  v_support text;
+  v_active boolean;
+  v_legacy text;
+  v_id uuid;
+  v_inserted integer := 0;
+  v_skipped integer := 0;
+  v_results jsonb := '[]'::jsonb;
+  v_reason text;
+begin
+  if v_actor is null then
+    raise exception '로그인이 필요합니다.';
+  end if;
+  if not private.is_office_user() then
+    raise exception '학생 명부 등록 권한이 없습니다.';
+  end if;
+  if jsonb_typeof(p_rows) <> 'array' then
+    raise exception '학생 명부 형식이 올바르지 않습니다.';
+  end if;
+  if jsonb_array_length(p_rows) < 1 or jsonb_array_length(p_rows) > 200 then
+    raise exception '한 번에 1~200명만 등록할 수 있습니다.';
+  end if;
+
+  for v_item in select value from jsonb_array_elements(p_rows)
+  loop
+    v_reason := null;
+    v_school_id := nullif(v_item->>'school_id','')::uuid;
+    v_name := btrim(coalesce(v_item->>'full_name',''));
+    v_alias := nullif(btrim(coalesce(v_item->>'alias','')),'');
+    v_school_type := nullif(btrim(coalesce(v_item->>'school_type','')),'');
+    v_grade := nullif(v_item->>'grade','')::integer;
+    v_class_no := nullif(v_item->>'class_no','')::integer;
+    v_support := coalesce(nullif(btrim(coalesce(v_item->>'preferred_support_type','')),''),'coach');
+    v_active := coalesce((v_item->>'active')::boolean,true);
+    v_legacy := nullif(btrim(coalesce(v_item->>'legacy_student_id','')),'');
+
+    if v_school_id is null then
+      raise exception '학교 정보가 없는 학생이 있습니다.';
+    end if;
+    if not exists (
+      select 1 from public.schools
+      where id=v_school_id and active=true
+    ) then
+      raise exception '등록되지 않았거나 비활성 학교가 포함되어 있습니다.';
+    end if;
+    if v_name='' then
+      raise exception '학생명이 없는 자료가 있습니다.';
+    end if;
+    if v_school_type not in ('초','중','고','특수','기타') then
+      raise exception '학교급 값이 올바르지 않습니다.';
+    end if;
+    if v_grade is null or v_grade < 1
+       or (v_school_type='초' and v_grade>6)
+       or (v_school_type in ('중','고') and v_grade>3)
+       or (v_school_type in ('특수','기타') and v_grade>12)
+    then
+      raise exception '학년 값이 학교급 범위와 맞지 않습니다.';
+    end if;
+    if v_class_no is null or v_class_no < 1 or v_class_no > 99 then
+      raise exception '반 값은 1~99 범위여야 합니다.';
+    end if;
+    if v_support not in ('coach','class','counseling') then
+      raise exception '희망 지원유형 값이 올바르지 않습니다.';
+    end if;
+
+    if v_legacy is not null and exists (
+      select 1 from public.students where legacy_student_id=v_legacy
+    ) then
+      v_reason := '기존 학생ID';
+    elsif exists (
+      select 1
+      from public.students
+      where school_id=v_school_id
+        and full_name=v_name
+        and grade=v_grade
+        and class_no=v_class_no
+        and active=true
+    ) then
+      v_reason := '동일 학교·학생명·학년·반 중복 후보';
+    end if;
+
+    if v_reason is not null then
+      v_skipped := v_skipped + 1;
+      v_results := v_results || jsonb_build_array(jsonb_build_object(
+        'ok',false,'full_name',v_name,'reason',v_reason
+      ));
+      continue;
+    end if;
+
+    insert into public.students(
+      legacy_student_id,school_id,full_name,alias,school_type,
+      grade,class_no,preferred_support_type,active
+    )
+    values(
+      v_legacy,v_school_id,v_name,v_alias,v_school_type,
+      v_grade,v_class_no,v_support,v_active
+    )
+    returning id into v_id;
+
+    v_inserted := v_inserted + 1;
+    v_results := v_results || jsonb_build_array(jsonb_build_object(
+      'ok',true,'id',v_id,'full_name',v_name
+    ));
+  end loop;
+
+  return jsonb_build_object(
+    'ok',true,
+    'inserted',v_inserted,
+    'skipped',v_skipped,
+    'results',v_results
+  );
+end;
+$$;
+
+revoke all on function public.bulk_register_students(jsonb)
+  from public, anon;
+grant execute on function public.bulk_register_students(jsonb)
+  to authenticated;
