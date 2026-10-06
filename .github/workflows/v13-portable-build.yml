@@ -2,8 +2,19 @@ name: V13 Portable Build
 
 on:
   workflow_dispatch:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'backend/**'
+      - 'assets/**'
+      - 'icons/**'
+      - 'index.html'
+      - 'manifest.webmanifest'
+      - 'sw.js'
+      - 'packaging/**'
+      - '.github/workflows/v13-portable-build.yml'
   push:
-    branches: [v13-hybrid-migration]
+    branches: [main]
     paths:
       - 'backend/**'
       - 'assets/**'
@@ -17,6 +28,7 @@ on:
 jobs:
   build-windows-portable:
     runs-on: windows-latest
+    timeout-minutes: 40
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -45,6 +57,11 @@ jobs:
         working-directory: backend
         run: python -m pytest -q
 
+      - name: Run operational UAT
+        shell: pwsh
+        working-directory: backend
+        run: python uat_runner.py --output-dir ../.build/uat-portable
+
       - name: Check hybrid JavaScript syntax
         shell: pwsh
         run: |
@@ -56,6 +73,7 @@ jobs:
           node --check assets/js/hybrid/dual-write.js
           node --check assets/js/hybrid/storage-migration.js
           node --check assets/js/hybrid/read-source.js
+          node --check assets/js/hybrid/realtime-import.js
           node --check assets/js/hybrid/document-export.js
 
       - name: Prepare complete offline frontend
@@ -64,10 +82,11 @@ jobs:
           python packaging/prepare_offline_bundle.py
           if (!(Test-Path '.build/offline_frontend/assets/vendor/chart.umd.js')) { throw 'offline Chart.js missing' }
           if (!(Test-Path '.build/offline_frontend/assets/vendor/xlsx.full.min.js')) { throw 'offline SheetJS missing' }
+          if (!(Test-Path '.build/offline_frontend/assets/js/hybrid/realtime-import.js')) { throw 'V14 realtime importer missing' }
           $idx = Get-Content -Raw -Encoding UTF8 '.build/offline_frontend/index.html'
           if ($idx -match 'https?://(cdn\.jsdelivr\.net|cdnjs\.cloudflare\.com|unpkg\.com|fonts\.googleapis\.com|fonts\.gstatic\.com)') { throw 'external CDN reference remains in offline index' }
 
-      - name: Build portable one-folder package
+      - name: Build PyInstaller one-folder portable
         shell: pwsh
         run: |
           $env:CB_CLINIC_FRONTEND_ROOT = (Resolve-Path '.build/offline_frontend').Path
@@ -75,40 +94,105 @@ jobs:
           New-Item -ItemType File -Force 'dist/학습클리닉_V13/portable.flag' | Out-Null
           New-Item -ItemType Directory -Force 'dist/학습클리닉_V13/data' | Out-Null
           @'
-          충북종합학습클리닉 업무관리 프로그램 V13
+          충북종합학습클리닉 업무관리 프로그램 V13 - EXE Portable
+
           실행: 학습클리닉_V13.exe
-          Python 별도 설치 불필요
-          인터넷 연결 없이 핵심 UI/차트/엑셀 기능 사용 가능
-          Chart.js / SheetJS는 프로그램 내부 로컬 자산 사용
-          data 폴더는 실제 업무데이터이므로 업데이트 시 보존하세요.
+          - Python 별도 설치 불필요
+          - 인터넷 연결 없이 V13 핵심 관리/정산/HWPX 사용 가능
+          - V14에서 만든 연계 JSON은 상단 "☁ V14 실적 가져오기"로 반영
+          - data 폴더는 실제 업무데이터이므로 업데이트 시 반드시 보존
+
+          기관 보안정책으로 사용자 제작 EXE가 차단되는 경우에는
+          함께 제공되는 Python Embedded Portable ZIP 사용을 권장합니다.
           '@ | Set-Content -Path 'dist/학습클리닉_V13/사용안내.txt' -Encoding UTF8
 
-      - name: Verify package structure and offline assets
+      - name: Verify PyInstaller package structure
         shell: pwsh
         run: |
           if (!(Test-Path 'dist/학습클리닉_V13/학습클리닉_V13.exe')) { throw 'EXE missing' }
           if (!(Test-Path 'dist/학습클리닉_V13/_internal/index.html')) { throw 'index.html missing' }
           if (!(Test-Path 'dist/학습클리닉_V13/_internal/assets/js/bootstrap.js')) { throw 'frontend assets missing' }
+          if (!(Test-Path 'dist/학습클리닉_V13/_internal/assets/js/hybrid/realtime-import.js')) { throw 'V14 realtime importer missing' }
           if (!(Test-Path 'dist/학습클리닉_V13/_internal/assets/vendor/chart.umd.js')) { throw 'packaged Chart.js missing' }
           if (!(Test-Path 'dist/학습클리닉_V13/_internal/assets/vendor/xlsx.full.min.js')) { throw 'packaged SheetJS missing' }
           if (!(Test-Path 'dist/학습클리닉_V13/_internal/assets/vendor/versions.json')) { throw 'vendor version metadata missing' }
           if (!(Test-Path 'dist/학습클리닉_V13/portable.flag')) { throw 'portable.flag missing' }
           $idx = Get-Content -Raw -Encoding UTF8 'dist/학습클리닉_V13/_internal/index.html'
           if ($idx -match 'https?://(cdn\.jsdelivr\.net|cdnjs\.cloudflare\.com|unpkg\.com|fonts\.googleapis\.com|fonts\.gstatic\.com)') { throw 'external CDN reference remains in packaged index' }
-          if ($idx -notmatch 'assets/vendor/chart\.umd\.js') { throw 'local Chart.js reference missing' }
-          if ($idx -notmatch 'assets/vendor/xlsx\.full\.min\.js') { throw 'local SheetJS reference missing' }
 
-      - name: Smoke-test packaged EXE
+      - name: Self-test packaged EXE through V14 projection settlement and HWPX
         shell: pwsh
         run: |
           $p = Start-Process -FilePath 'dist/학습클리닉_V13/학습클리닉_V13.exe' -ArgumentList '--self-test' -Wait -PassThru
           if ($p.ExitCode -ne 0) { throw "Packaged EXE self-test failed: exit $($p.ExitCode)" }
           if (!(Test-Path 'dist/학습클리닉_V13/data/clinic_v13.db')) { throw 'portable SQLite database was not created' }
 
-      - name: Upload portable package
+      - name: Clean EXE test data and create ZIP
+        shell: pwsh
+        run: |
+          Remove-Item -Recurse -Force 'dist/학습클리닉_V13/data' -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Force 'dist/학습클리닉_V13/data' | Out-Null
+          @'
+          이 폴더에는 실제 업무 데이터(SQLite, 생성 문서)가 저장됩니다.
+          프로그램 업데이트 시 이 data 폴더를 삭제하거나 덮어쓰지 마십시오.
+          '@ | Set-Content -Path 'dist/학습클리닉_V13/data/데이터폴더_보존.txt' -Encoding UTF8
+          Compress-Archive -Path 'dist/학습클리닉_V13' -DestinationPath 'dist/학습클리닉_V13_Windows_Portable_EXE.zip' -CompressionLevel Optimal
+
+      - name: Build official Python Embedded portable ZIP
+        shell: pwsh
+        run: |
+          ./packaging/build_embedded_portable.ps1 -Clean:$false
+          if (!(Test-Path 'dist/학습클리닉_V13_Windows_Portable_Embedded.zip')) { throw 'Embedded portable ZIP missing' }
+
+      - name: Create package manifest and SHA256
+        shell: pwsh
+        run: |
+          $sha = '${{ github.sha }}'
+          $stamp = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
+          @"
+          product=CB Edu Clinic V13 Hybrid
+          commit=$sha
+          built_at_utc=$stamp
+          v14_handoff=true
+          python_required_on_user_pc=false
+          exe_variant=dist/학습클리닉_V13_Windows_Portable_EXE.zip
+          embedded_variant=dist/학습클리닉_V13_Windows_Portable_Embedded.zip
+          "@ | Set-Content -Path 'dist/BUILD_MANIFEST.txt' -Encoding UTF8
+
+          Get-FileHash 'dist/학습클리닉_V13_Windows_Portable_EXE.zip' -Algorithm SHA256 |
+            ForEach-Object { "EXE  $($_.Hash)  학습클리닉_V13_Windows_Portable_EXE.zip" } |
+            Set-Content -Path 'dist/SHA256SUMS.txt' -Encoding ASCII
+          Get-FileHash 'dist/학습클리닉_V13_Windows_Portable_Embedded.zip' -Algorithm SHA256 |
+            ForEach-Object { "EMBEDDED  $($_.Hash)  학습클리닉_V13_Windows_Portable_Embedded.zip" } |
+            Add-Content -Path 'dist/SHA256SUMS.txt' -Encoding ASCII
+
+      - name: Upload EXE portable ZIP
         uses: actions/upload-artifact@v4
         with:
-          name: 학습클리닉_V13_Windows_Portable_Offline
-          path: dist/학습클리닉_V13
+          name: 학습클리닉_V13_Windows_Portable_EXE
+          path: |
+            dist/학습클리닉_V13_Windows_Portable_EXE.zip
+            dist/BUILD_MANIFEST.txt
+            dist/SHA256SUMS.txt
           if-no-files-found: error
-          retention-days: 14
+          retention-days: 30
+
+      - name: Upload Python Embedded portable ZIP
+        uses: actions/upload-artifact@v4
+        with:
+          name: 학습클리닉_V13_Windows_Portable_Embedded
+          path: |
+            dist/학습클리닉_V13_Windows_Portable_Embedded.zip
+            dist/BUILD_MANIFEST.txt
+            dist/SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload portable UAT report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: 학습클리닉_V13_Portable_UAT
+          path: .build/uat-portable
+          if-no-files-found: warn
+          retention-days: 30
