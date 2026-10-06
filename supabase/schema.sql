@@ -912,3 +912,43 @@ begin
     alter publication supabase_realtime add table public.notices;
   end if;
 end $$;
+
+
+-- ---------- V14 -> V13 projection ----------
+create or replace view public.v13_session_projection
+with (security_invoker = true)
+as
+select
+  s.id,
+  a.legacy_matching_id,
+  p.legacy_staff_id,
+  st.legacy_student_id,
+  s.work_date,
+  s.planned_start_at,
+  s.planned_end_at,
+  s.start_at,
+  s.end_at,
+  case
+    when s.start_at is not null and s.end_at is not null
+    then round(extract(epoch from (s.end_at - s.start_at)) / 60.0)::integer
+    else null
+  end as actual_minutes,
+  a.kind,
+  coalesce(lr.topic, '') as topic,
+  coalesce(lr.content, lr.topic, '') as content,
+  coalesce(sp.place, sc.name, '') as place,
+  sc.name as school_name,
+  s.verification_state,
+  s.settlement_state,
+  s.verification_reason
+from public.sessions s
+join public.assignments a on a.id = s.assignment_id
+join public.profiles p on p.id = s.supporter_id
+join public.students st on st.id = s.student_id
+left join public.schedule_plans sp on sp.id = s.schedule_plan_id
+left join public.schools sc on sc.id = sp.school_id
+left join public.lesson_records lr on lr.session_id = s.id
+where s.session_status = 'completed';
+
+revoke all on public.v13_session_projection from public, anon;
+grant select on public.v13_session_projection to authenticated;

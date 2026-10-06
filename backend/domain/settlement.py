@@ -22,8 +22,6 @@ def _rates(state: dict[str, Any]) -> dict[str, float]:
 
 def _budget(state: dict[str, Any]) -> dict[str, float]:
     raw = (state.get("cfg") or {}).get("budget") or {}
-    # V12/초기 데이터 중에는 전체예산을 숫자 하나로 저장한 경우가 있을 수 있다.
-    # 그 값은 총예산으로 안전하게 승격하고 세부 항목은 0으로 둔다.
     if isinstance(raw, (int, float, str)):
         try:
             total = float(raw or 0)
@@ -53,6 +51,11 @@ def _log_amount(log: dict[str, Any], rates: dict[str, float]) -> float:
     return rates["cls"] if (log.get("kind") == "class") else rates["coach"]
 
 
+def _log_date(log: dict[str, Any]) -> str:
+    """V12 legacy(d)와 V13/V14(date)를 모두 허용한다."""
+    return str(log.get("date") or log.get("d") or "")
+
+
 def build_settlement(payload: dict[str, Any]) -> dict[str, Any]:
     state = _state(payload)
     ym = str(payload.get("ym") or "")
@@ -68,8 +71,8 @@ def build_settlement(payload: dict[str, Any]) -> dict[str, Any]:
             status = log.get("status") or "conducted"
             if status not in VERIFIED_STATUSES:
                 continue
-            date = str(log.get("date") or "")
-            if ym and not date.startswith(ym):
+            log_date = _log_date(log)
+            if ym and not log_date.startswith(ym):
                 continue
             kind = log.get("kind") or matching.get("kind") or "coach"
             amount = _log_amount({**log, "kind": kind}, rates)
@@ -78,9 +81,9 @@ def build_settlement(payload: dict[str, Any]) -> dict[str, Any]:
             stu = students.get(str(matching.get("stuId") or "")) or {}
             ci = matching.get("classInfo") or {}
             by_staff[staff_id][bucket].append({
-                "date": date,
+                "date": log_date,
                 "time": log.get("time") or "",
-                "topic": log.get("topic") or "",
+                "topic": log.get("topic") or log.get("content") or "",
                 "minutes": log.get("minutes"),
                 "amount": amount,
                 "stu": (f"{ci.get('gr')}-{ci.get('cls')}반" if ci.get("gr") else (ci.get("sc") or "")) if kind == "class" else (stu.get("nm") or ""),
