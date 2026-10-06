@@ -93,12 +93,52 @@ jobs:
             await context.close();
           }
 
+          async function checkMobileId(browser, name, viewport) {
+            const context = await browser.newContext({ viewport });
+            await context.addInitScript(() => {
+              window.APP_CONFIG = { demoMode: true };
+              localStorage.setItem('clinic-demo-role', 'supporter');
+            });
+            const page = await context.newPage();
+            const pageErrors = [];
+            page.on('pageerror', err => pageErrors.push(String(err)));
+
+            const response = await page.goto(
+              'http://127.0.0.1:4173/realtime-app/?mobile-id-smoke=1',
+              { waitUntil: 'domcontentloaded', timeout: 30000 }
+            );
+            if (!response || !response.ok()) {
+              throw new Error(name + ': demo page HTTP response failed');
+            }
+
+            const myButton = page.getByRole('button', { name: /내정보/ });
+            await myButton.waitFor({ state: 'visible', timeout: 10000 });
+            await myButton.click();
+
+            await page.getByText('학습지원단 모바일 신분증', { exact: true }).waitFor({ state: 'visible', timeout: 5000 });
+            await page.getByText('JCEC-LS-DEMO-0001', { exact: true }).waitFor({ state: 'visible', timeout: 5000 });
+            await page.getByText('법정 신분증이 아닙니다.', { exact: false }).waitFor({ state: 'visible', timeout: 5000 });
+
+            await page.screenshot({
+              path: '/tmp/v14-mobile-id-' + name + '.png',
+              fullPage: true
+            });
+
+            if (pageErrors.length) {
+              throw new Error(name + ': mobile ID page errors: ' + pageErrors.join(' | '));
+            }
+
+            await context.close();
+          }
+
           (async () => {
             const browser = await chromium.launch({ headless: true });
             try {
               await check(browser, 'desktop', { width: 1440, height: 900 });
               await check(browser, 'mobile', { width: 390, height: 844 });
-              console.log('V14 browser smoke passed on desktop and mobile.');
+              await checkMobileId(browser, 'desktop', { width: 1440, height: 900 });
+              await checkMobileId(browser, 'mobile', { width: 390, height: 844 });
+              console.log('V14 login and mobile ID smoke passed on desktop and mobile.');
             } finally {
               await browser.close();
             }
@@ -113,5 +153,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: v14-browser-smoke
-          path: /tmp/v14-smoke-*.png
+          path: |
+            /tmp/v14-smoke-*.png
+            /tmp/v14-mobile-id-*.png
           if-no-files-found: ignore
