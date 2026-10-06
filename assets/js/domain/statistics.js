@@ -36,6 +36,23 @@ function logInPeriod(log, filter){
   if(end && d>end) return false;
   return true;
 }
+function reportPeriodText(filter=reportFilterFromDom()){
+  const {start,end}=periodBounds(filter.asOf,filter.reportType);
+  const fmt=d=>d ? `${d.getFullYear()}.${String(d.getMonth()+1).padStart(2,'0')}.${String(d.getDate()).padStart(2,'0')}.` : '';
+  if(!end) return '실적 집계기간: 전체';
+  return `실적 집계기간: ${start?fmt(start)+' ~ ':''}${fmt(end)} · 신청현황: 현재 등록정보/활성 학급 기준`;
+}
+function renderStatisticsBasisNote(){
+  const host=document.getElementById('pivot-area');
+  if(!host) return;
+  host.querySelector('.v13-stat-basis')?.remove();
+  const note=document.createElement('div');
+  note.className='v13-stat-basis';
+  note.style.cssText='margin:0 0 12px;padding:9px 12px;border:1px solid #cbd5e1;border-radius:8px;background:#f8fafc;color:#475569;font-size:12px';
+  note.textContent=reportPeriodText();
+  host.prepend(note);
+}
+
 function classGroupKey(ci){
   return [ci?.sc||'',ci?.scType||'',ci?.gr||'',ci?.cls||''].join('__');
 }
@@ -173,6 +190,11 @@ export function installStatisticsOverrides(){
   window.pivotDyslexBorder=pivotDyslexBorderV13;
   const originalRenderPivots=window.renderPivots;
   if(typeof originalRenderPivots==='function'){
-    window.renderPivots=function(...args){withFreshIndexes(true); return originalRenderPivots.apply(this,args);};
+    window.renderPivots=function(...args){
+      withFreshIndexes(true);
+      const result=originalRenderPivots.apply(this,args);
+      renderStatisticsBasisNote();
+      return result;
+    };
   }
 }
