@@ -133,6 +133,10 @@ jobs:
             await page.locator('#edit-rec-topic').fill('수정 후 주제');
             await page.locator('#edit-rec-content').fill('수정 후 상세 내용');
             await page.getByRole('button',{name:'💾 저장',exact:true}).click();
+            await page.waitForFunction(() => {
+              const area=document.getElementById('ver-area');
+              return area && area.innerHTML.includes('수정 후 주제') && area.innerHTML.includes('14:10~14:55');
+            }, null, { timeout: 10000 });
 
             let saved=await page.evaluate(()=>{
               const l=window.__V13_GET_BROWSER_STATE__().mat[0].logs[0];
