@@ -57,6 +57,9 @@ const PythonBridge = (() => {
   async function statistics(payload) { return post('/api/statistics', payload); }
   async function verification(payload) { return post('/api/verification', payload); }
   async function settlement(payload) { return post('/api/settlement', payload); }
+  async function realtimeProject(state, sessions) {
+    return post('/api/realtime/project', { state, sessions });
+  }
   async function storageStatus() { return request('/api/storage/status'); }
   async function storageImport(state, options={}) {
     return post('/api/storage/import', { state, source: options.source || 'browser-state', replace: options.replace !== false });
@@ -82,7 +85,7 @@ const PythonBridge = (() => {
   }
 
   return {
-    isAvailable, health, statistics, verification, settlement,
+    isAvailable, health, statistics, verification, settlement, realtimeProject,
     storageStatus, storageImport, storageExport, storageUpsert, storageDelete,
     storageSingleton, storageCompare, downloadStorageBackup,
     exportFile, setBaseUrl
