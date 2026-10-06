@@ -1,0 +1,137 @@
+name: V14 Schedule Smoke
+
+on:
+  pull_request:
+    paths:
+      - 'realtime-app/**'
+      - 'supabase/schema.sql'
+      - '.github/workflows/v14-schedule-smoke.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'realtime-app/**'
+      - 'supabase/schema.sql'
+      - '.github/workflows/v14-schedule-smoke.yml'
+  workflow_dispatch:
+
+jobs:
+  schedule-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Playwright
+        run: |
+          npm install --no-save playwright@1.56.1
+          npx playwright install --with-deps chromium
+
+      - name: Start static server
+        run: |
+          python3 -m http.server 4173 > /tmp/clinic-http.log 2>&1 &
+          for i in {1..30}; do
+            curl -fsS http://127.0.0.1:4173/realtime-app/ >/dev/null && exit 0
+            sleep 1
+          done
+          cat /tmp/clinic-http.log
+          exit 1
+
+      - name: Verify schedule creation conflict and deactivation
+        run: |
+          node <<'NODE'
+          const { chromium } = require('playwright');
+
+          async function run(viewport, name) {
+            const browser = await chromium.launch({ headless: true });
+            const context = await browser.newContext({ viewport, serviceWorkers: 'block' });
+            await context.addInitScript(() => {
+              window.APP_CONFIG = { demoMode: true };
+              localStorage.setItem('clinic-demo-role', 'admin');
+            });
+            const page = await context.newPage();
+            const errors = [];
+            page.on('pageerror', e => errors.push(String(e)));
+            await page.route('https://cdn.jsdelivr.net/**', route => route.fulfill({
+              status: 200,
+              contentType: 'application/javascript',
+              body: 'window.supabase = window.supabase || {};'
+            }));
+
+            await page.goto('http://127.0.0.1:4173/realtime-app/?schedule-smoke=1', {
+              waitUntil: 'domcontentloaded',
+              timeout: 30000
+            });
+
+            await page.getByRole('button', { name: '시간표 관리' }).click();
+            await page.getByText('시간표 관리', { exact: true }).waitFor({ state: 'visible' });
+
+            await page.locator('#schedule-assignment').selectOption('a1');
+            await page.locator('#schedule-mode').selectOption('recurring');
+            await page.locator('#schedule-start').fill('17:00');
+            await page.locator('#schedule-end').fill('17:50');
+            await page.locator('#schedule-school').selectOption('demo-school-1');
+            await page.locator('#schedule-place').fill('새 학습실');
+            await page.getByRole('button', { name: '시간표 생성' }).click();
+
+            const created = page.locator('.item').filter({ hasText: '새 학습실' }).first();
+            await created.waitFor({ state: 'visible' });
+            await created.getByText('활성', { exact: true }).waitFor({ state: 'visible' });
+
+            await page.locator('#schedule-start').fill('17:20');
+            await page.locator('#schedule-end').fill('18:00');
+            await page.locator('#schedule-place').fill('충돌실');
+            await page.getByRole('button', { name: '시간표 생성' }).click();
+            await page.getByText(/시간표 충돌:/).waitFor({ state: 'visible' });
+
+            page.once('dialog', d => d.accept());
+            await created.getByRole('button', { name: '시간표 비활성화' }).click();
+
+            const inactive = page.locator('.item').filter({ hasText: '새 학습실' }).last();
+            await inactive.waitFor({ state: 'visible' });
+            await inactive.getByText('비활성', { exact: true }).waitFor({ state: 'visible' });
+
+            await page.locator('#schedule-mode').selectOption('specific');
+            const today = await page.locator('#schedule-specific-date').inputValue();
+            const d = new Date(today + 'T12:00:00Z');
+            d.setUTCDate(d.getUTCDate() + 2);
+            const specific = d.toISOString().slice(0,10);
+            await page.locator('#schedule-specific-date').fill(specific);
+            await page.locator('#schedule-start').fill('18:10');
+            await page.locator('#schedule-end').fill('18:40');
+            await page.locator('#schedule-place').fill('특정일 학습실');
+            await page.getByRole('button', { name: '시간표 생성' }).click();
+
+            const specificRow = page.locator('.item').filter({ hasText: '특정일 학습실' }).first();
+            await specificRow.waitFor({ state: 'visible' });
+            await specificRow.getByText(specific, { exact: false }).waitFor({ state: 'visible' });
+
+            await page.screenshot({
+              path: '/tmp/v14-schedule-' + name + '.png',
+              fullPage: true
+            });
+
+            if (errors.length) throw new Error(errors.join(' | '));
+            await browser.close();
+          }
+
+          (async () => {
+            await run({ width: 1440, height: 900 }, 'desktop');
+            await run({ width: 390, height: 844 }, 'mobile');
+            console.log('Schedule smoke passed.');
+          })().catch(e => {
+            console.error(e);
+            process.exit(1);
+          });
+          NODE
+
+      - name: Upload schedule screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: v14-schedule-smoke
+          path: /tmp/v14-schedule-*.png
+          if-no-files-found: ignore
