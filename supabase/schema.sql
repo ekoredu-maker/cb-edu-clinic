@@ -1781,3 +1781,107 @@ revoke all on function public.resolve_session_verification(uuid,text,text)
   from public, anon;
 grant execute on function public.resolve_session_verification(uuid,text,text)
   to authenticated;
+
+
+-- ---------- V14 verification audit trail ----------
+create or replace function private.audit_session_state_change()
+returns trigger
+language plpgsql
+security definer
+set search_path = public, private, pg_temp
+as $$
+declare
+  v_actor uuid := (select auth.uid());
+  v_action text;
+  v_detail jsonb;
+begin
+  if old.verification_state is distinct from new.verification_state
+     or old.verification_reason is distinct from new.verification_reason then
+    v_action := case
+      when new.verification_state='auto_verified' then 'verification_auto_verified'
+      when new.verification_state='confirmed' then 'verification_confirmed'
+      when new.verification_state='rejected' then 'verification_rejected'
+      when new.verification_state='review_required' and old.verification_state in ('confirmed','rejected')
+        then 'verification_returned_to_review'
+      when new.verification_state='review_required' then 'verification_review_required'
+      else 'verification_changed'
+    end;
+    v_detail := jsonb_build_object(
+      'from_state', old.verification_state,
+      'to_state', new.verification_state,
+      'from_reason', old.verification_reason,
+      'to_reason', new.verification_reason,
+      'settlement_state', new.settlement_state
+    );
+    insert into public.audit_logs(actor_id,action,entity_type,entity_id,detail)
+    values(v_actor,v_action,'session',new.id::text,v_detail);
+  end if;
+
+  if old.settlement_state is distinct from new.settlement_state then
+    insert into public.audit_logs(actor_id,action,entity_type,entity_id,detail)
+    values(
+      v_actor,
+      case
+        when new.settlement_state='approved' then 'settlement_approved'
+        when new.settlement_state='paid' then 'settlement_paid'
+        else 'settlement_changed'
+      end,
+      'session',
+      new.id::text,
+      jsonb_build_object(
+        'from_state',old.settlement_state,
+        'to_state',new.settlement_state,
+        'verification_state',new.verification_state
+      )
+    );
+  end if;
+  return new;
+end;
+$$;
+
+revoke all on function private.audit_session_state_change() from public, anon, authenticated;
+
+drop trigger if exists trg_audit_session_state_change on public.sessions;
+create trigger trg_audit_session_state_change
+after update of verification_state, verification_reason, settlement_state
+on public.sessions
+for each row
+execute function private.audit_session_state_change();
+
+create or replace function private.audit_school_baseline_change()
+returns trigger
+language plpgsql
+security definer
+set search_path = public, private, pg_temp
+as $$
+declare
+  v_actor uuid := (select auth.uid());
+begin
+  if old.latitude is distinct from new.latitude
+     or old.longitude is distinct from new.longitude
+     or old.radius_m is distinct from new.radius_m then
+    insert into public.audit_logs(actor_id,action,entity_type,entity_id,detail)
+    values(
+      v_actor,
+      'school_baseline_changed',
+      'school',
+      new.id::text,
+      jsonb_build_object(
+        'school_name',new.name,
+        'baseline_registered',(new.latitude is not null and new.longitude is not null),
+        'radius_m',new.radius_m
+      )
+    );
+  end if;
+  return new;
+end;
+$$;
+
+revoke all on function private.audit_school_baseline_change() from public, anon, authenticated;
+
+drop trigger if exists trg_audit_school_baseline_change on public.schools;
+create trigger trg_audit_school_baseline_change
+after update of latitude, longitude, radius_m
+on public.schools
+for each row
+execute function private.audit_school_baseline_change();
