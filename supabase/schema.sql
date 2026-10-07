@@ -2079,3 +2079,82 @@ grant execute on function public.create_schedule_plan_checked(
 ) to authenticated;
 grant execute on function public.deactivate_schedule_plan(uuid)
   to authenticated;
+
+
+-- ---------- V14 verification resolution ----------
+create or replace function public.resolve_session_verification(
+  p_session_id uuid,
+  p_action text,
+  p_reason text default null
+)
+returns jsonb
+language plpgsql
+security invoker
+set search_path = public, private, pg_temp
+as $$
+declare
+  v_uid uuid := (select auth.uid());
+  v_session public.sessions;
+  v_state text;
+  v_reason text;
+begin
+  if v_uid is null then
+    raise exception '로그인이 필요합니다.';
+  end if;
+
+  if not (private.has_role('admin') or private.has_role('supervisor')) then
+    raise exception '검증상태 처리 권한이 없습니다.';
+  end if;
+
+  select * into v_session
+  from public.sessions
+  where id=p_session_id
+  for update;
+
+  if v_session.id is null then
+    raise exception '수업 실적을 찾을 수 없습니다.';
+  end if;
+
+  if v_session.session_status <> 'completed' then
+    raise exception '완료된 수업만 검증상태를 처리할 수 있습니다.';
+  end if;
+
+  if v_session.settlement_state <> 'pending' then
+    raise exception '지급 승인 이후에는 검증상태를 변경할 수 없습니다.';
+  end if;
+
+  case p_action
+    when 'confirm' then
+      v_state := 'confirmed';
+      v_reason := coalesce(nullif(btrim(p_reason),''),'담당자 확인 완료');
+    when 'reject' then
+      if nullif(btrim(p_reason),'') is null then
+        raise exception '반려 사유를 입력해 주세요.';
+      end if;
+      v_state := 'rejected';
+      v_reason := btrim(p_reason);
+    when 'review' then
+      v_state := 'review_required';
+      v_reason := coalesce(nullif(btrim(p_reason),''),'담당자 재검토로 전환');
+    else
+      raise exception '지원하지 않는 검증 처리입니다.';
+  end case;
+
+  update public.sessions
+  set verification_state=v_state,
+      verification_reason=v_reason
+  where id=p_session_id;
+
+  return jsonb_build_object(
+    'ok',true,
+    'session_id',p_session_id,
+    'verification_state',v_state,
+    'verification_reason',v_reason
+  );
+end;
+$$;
+
+revoke all on function public.resolve_session_verification(uuid,text,text)
+  from public, anon;
+grant execute on function public.resolve_session_verification(uuid,text,text)
+  to authenticated;
