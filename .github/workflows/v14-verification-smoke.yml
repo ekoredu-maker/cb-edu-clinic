@@ -1,0 +1,116 @@
+name: V14 Verification Smoke
+
+on:
+  pull_request:
+    paths:
+      - 'realtime-app/**'
+      - 'supabase/schema.sql'
+      - '.github/workflows/v14-verification-smoke.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'realtime-app/**'
+      - 'supabase/schema.sql'
+      - '.github/workflows/v14-verification-smoke.yml'
+  workflow_dispatch:
+
+jobs:
+  verification-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Playwright
+        run: |
+          npm install --no-save playwright@1.56.1
+          npx playwright install --with-deps chromium
+
+      - name: Start static server
+        run: |
+          python3 -m http.server 4173 > /tmp/clinic-http.log 2>&1 &
+          for i in {1..30}; do
+            curl -fsS http://127.0.0.1:4173/realtime-app/ >/dev/null && exit 0
+            sleep 1
+          done
+          cat /tmp/clinic-http.log
+          exit 1
+
+      - name: Verify review confirm reopen and reverify flow
+        run: |
+          node <<'NODE'
+          const { chromium } = require('playwright');
+
+          async function run(viewport, name) {
+            const browser = await chromium.launch({ headless: true });
+            const context = await browser.newContext({ viewport, serviceWorkers: 'block' });
+            await context.addInitScript(() => {
+              window.APP_CONFIG = { demoMode: true };
+              localStorage.setItem('clinic-demo-role', 'admin');
+            });
+            const page = await context.newPage();
+            const errors = [];
+            page.on('pageerror', e => errors.push(String(e)));
+            await page.route('https://cdn.jsdelivr.net/**', route => route.fulfill({
+              status: 200,
+              contentType: 'application/javascript',
+              body: 'window.supabase = window.supabase || {};'
+            }));
+
+            await page.goto('http://127.0.0.1:4173/realtime-app/?verification-smoke=1', {
+              waitUntil: 'domcontentloaded',
+              timeout: 30000
+            });
+
+            // Existing demo completed session -> review_required
+            page.once('dialog', d => d.accept());
+            await page.evaluate(() => window.returnSessionToReview('sess-demo-done'));
+
+            await page.getByRole('button', { name: '예외' }).click();
+            await page.getByText('확인 필요', { exact: true }).first().waitFor({ state: 'visible' });
+            await page.getByRole('button', { name: '자동 재검증' }).waitFor({ state: 'visible' });
+            await page.getByRole('button', { name: '확인 완료' }).waitFor({ state: 'visible' });
+            await page.getByRole('button', { name: '반려' }).waitFor({ state: 'visible' });
+
+            page.once('dialog', d => d.accept());
+            await page.getByRole('button', { name: '확인 완료' }).click();
+            await page.getByText('처리 완료 · 수정 가능', { exact: true }).waitFor({ state: 'visible' });
+            await page.getByRole('button', { name: '다시 검토' }).waitFor({ state: 'visible' });
+
+            page.once('dialog', d => d.accept());
+            await page.getByRole('button', { name: '다시 검토' }).click();
+            await page.getByRole('button', { name: '자동 재검증' }).waitFor({ state: 'visible' });
+
+            await page.getByRole('button', { name: '자동 재검증' }).click();
+            await page.getByText('현재 확인할 예외가 없습니다.', { exact: true }).waitFor({ state: 'visible' });
+
+            await page.screenshot({
+              path: '/tmp/v14-verification-' + name + '.png',
+              fullPage: true
+            });
+
+            if (errors.length) throw new Error(errors.join(' | '));
+            await browser.close();
+          }
+
+          (async () => {
+            await run({ width: 1440, height: 900 }, 'desktop');
+            await run({ width: 390, height: 844 }, 'mobile');
+            console.log('Verification resolution smoke passed.');
+          })().catch(e => {
+            console.error(e);
+            process.exit(1);
+          });
+          NODE
+
+      - name: Upload verification screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: v14-verification-smoke
+          path: /tmp/v14-verification-*.png
+          if-no-files-found: ignore
