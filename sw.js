@@ -1,4 +1,4 @@
-const CACHE_NAME = "jc-edu-clinic-v12.3.2-stat-print-fix";
+const CACHE_NAME = "jc-edu-clinic-v12.3.3-verification-edit-fix";
 const ASSETS = [
   "./",
   "./index.html",
