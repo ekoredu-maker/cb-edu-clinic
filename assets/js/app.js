@@ -2972,9 +2972,19 @@ function loadRatesAndBudget(){
    { id, date, time, topic, place, status: 'conducted'|'canceled'|'verified'|'rejected',
      minutes, cancelReason, verifiedBy, verifiedAt, amount, kind }
 */
+function normalizeLogVerificationStatus(status){
+  const s = String(status || '').trim();
+  if(!s) return 'conducted';
+  if(s === 'pending' || s === 'review_required') return 'conducted';
+  if(s === 'auto_verified' || s === 'confirmed') return 'verified';
+  return s;
+}
+function isEditableUnverifiedLog(l){
+  return normalizeLogVerificationStatus(l && l.status) === 'conducted';
+}
 function ensureLogFields(l, m){
   if(!l.id) l.id = uid();
-  if(!l.status) l.status = 'conducted';  // 구데이터 호환
+  l.status = normalizeLogVerificationStatus(l.status);  // V13/V14·구데이터 상태 호환
   if(!l.kind) l.kind = m.kind || 'coach';
   if(!l.minutes){
     if(l.kind==='class'){
@@ -6368,13 +6378,13 @@ window.refreshDashboard = function(){
     }, 0);
 
     const tbody = rows.map(({ m, l, stu }) => {
-      const st = l.status || 'conducted';
+      const st = normalizeLogVerificationStatus(l.status);
       const stColor = st === 'verified' || st === 'paid' ? 'bg-yes' : st === 'rejected' ? 'bg-danger' : st === 'canceled' ? 'bg-no' : 'bg-info';
       const stLbl = ({ conducted: '미검증', verified: '✅승인', rejected: '❌반려', canceled: '취소', paid: '지급완료' })[st] || st;
       const kindLbl = (l.kind || m.kind) === 'class' ? '수업협력' : '학습코칭';
       const subjectNm = stu ? stu.nm : (((m.classInfo || {}).gr) ? `🏫 ${(m.classInfo || {}).gr}-${(m.classInfo || {}).cls}반` : '-');
       const amt = st === 'canceled' ? '-' : (typeof formatMoney === 'function' ? formatMoney(l.amount || (typeof calcLogAmount === 'function' ? calcLogAmount(l) : 0)) : String(l.amount || 0));
-      const canEdit = (st === 'conducted');
+      const canEdit = (normalizeLogVerificationStatus(st) === 'conducted');
       return `<tr>
         <td>${esc(l.date || '')}</td>
         <td>${esc(l.time || '')}</td>
@@ -6454,7 +6464,8 @@ window.refreshDashboard = function(){
     const l = m ? (m.logs || []).find(x => x.id === logId) : null;
     if (!m || !l) { toast('실적 정보를 찾을 수 없습니다', 'danger'); return; }
 
-    const canEdit = (l.status === 'conducted');
+    ensureLogFields(l, m);
+    const canEdit = isEditableUnverifiedLog(l);
     const realtimeNote = l.source === 'realtime'
       ? '<div style="padding:8px;background:#eff6ff;border-radius:6px;font-size:12px;color:#1d4ed8">ℹ️ V14 연계 실적을 V13에서 수정하면 로컬 정정으로 기록됩니다. 같은 세션을 V14에서 다시 가져오면 원본 값으로 갱신될 수 있습니다.</div>'
       : '';
@@ -6491,7 +6502,8 @@ window.refreshDashboard = function(){
     const m = (db.mat || []).find(x => x.id === matId);
     const l = m ? (m.logs || []).find(x => x.id === logId) : null;
     if (!m || !l) { toast('실적을 찾을 수 없습니다', 'danger'); return; }
-    if (l.status !== 'conducted') { toast('미검증 실적만 수정할 수 있습니다', 'warning'); return; }
+    ensureLogFields(l, m);
+    if (!isEditableUnverifiedLog(l)) { toast('미검증 실적만 수정할 수 있습니다', 'warning'); return; }
 
     const newDate = (document.getElementById('edit-rec-date') || {}).value;
     const newTime = ((document.getElementById('edit-rec-time') || {}).value || '').trim();
@@ -6565,7 +6577,8 @@ window.refreshDashboard = function(){
     const m = (db.mat || []).find(x => x.id === matId);
     const l = m ? (m.logs || []).find(x => x.id === logId) : null;
     if (!m || !l) return;
-    if (l.status !== 'conducted') { toast('검증된 실적은 삭제할 수 없습니다', 'warning'); return; }
+    ensureLogFields(l, m);
+    if (!isEditableUnverifiedLog(l)) { toast('검증된 실적은 삭제할 수 없습니다', 'warning'); return; }
     if (!confirm('이 실적을 삭제하시겠습니까?')) return;
     m.logs = (m.logs || []).filter(x => x.id !== logId);
     if (typeof save === 'function') await save('mat', m);
