@@ -106,7 +106,7 @@ jobs:
                   topic:'수정 전 주제',
                   content:'수정 전 내용',
                   place:'기존실',
-                  status:'conducted',
+                  status:'pending',
                   kind:'coach',
                   amount:40000,
                   source:'realtime'
@@ -124,7 +124,11 @@ jobs:
 
             const rendered=await page.evaluate(()=>document.getElementById('ver-area').innerHTML);
             if(!rendered.includes('수정 전 주제') || !rendered.includes('✏️ 수정')){
-              throw new Error('Verification screen did not render the edit action.');
+              throw new Error('Pending-like verification state did not normalize to editable 미검증.');
+            }
+            const normalizedBeforeEdit=await page.evaluate(()=>window.__V13_GET_BROWSER_STATE__().mat[0].logs[0].status);
+            if(normalizedBeforeEdit!=='conducted'){
+              throw new Error('Pending-like status was not normalized: '+normalizedBeforeEdit);
             }
 
             await page.evaluate(()=>window.openEditRecModal('mat-edit','log-edit'));
