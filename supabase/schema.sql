@@ -2102,7 +2102,7 @@ begin
     raise exception '로그인이 필요합니다.';
   end if;
 
-  if not (private.has_role('admin') or private.has_role('supervisor')) then
+  if not private.is_office_user() then
     raise exception '검증상태 처리 권한이 없습니다.';
   end if;
 
