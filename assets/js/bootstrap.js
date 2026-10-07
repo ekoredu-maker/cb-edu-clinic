@@ -46,6 +46,11 @@ window.addEventListener('load', async () => {
       const health = await PythonBridge.health();
       if (health?.ok) {
         hybridLabel = 'Hybrid/Python';
+
+        // 저장 훅은 다른 진단보다 먼저 켠다.
+        // 사용자가 화면이 열린 직후 수정해도 Browser와 SQLite가 어긋나지 않게 한다.
+        installDualWrite();
+
         if (health.offline?.ready) offlineLabel = ' · 완전오프라인';
         const readyTemplates = Object.values(health.templates || {}).filter(Boolean).length;
         const totalTemplates = Object.keys(health.templates || {}).length;
@@ -61,7 +66,6 @@ window.addEventListener('load', async () => {
         else dataLabel = ' · 데이터원본 Browser';
 
         if (health.storage?.lastMigration) {
-          installDualWrite();
           const parity = await compareDualWrite();
           syncLabel = parity.ok ? ' · DB동기화 PASS' : ' · DB동기화 확인필요';
         } else {
