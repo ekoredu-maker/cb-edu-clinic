@@ -64,44 +64,28 @@ function normalizeMeta(record){
 
 export function installDualWrite(){
   if (installed || !PythonBridge.isAvailable() || !window.ClinicApp) return false;
-  const app = window.ClinicApp;
-  if (typeof app.save !== 'function' || typeof app.removeItem !== 'function' || typeof app.saveAll !== 'function') return false;
 
-  const originalSave = app.save.bind(app);
-  const originalRemove = app.removeItem.bind(app);
-  const originalSaveAll = app.saveAll.bind(app);
-
-  const wrappedSave = async function(store, record, ...rest){
-    const result = await originalSave(store, record, ...rest);
+  window.__V13_DUAL_WRITE_SAVE__ = async (store, record) => {
     if (COLLECTIONS.has(store) && record?.id != null) {
-      enqueue(`upsert:${store}:${record.id}`, () => PythonBridge.storageUpsert(store, record));
-    } else if (store === 'meta') {
-      const cfg = normalizeMeta(record);
-      if (cfg) enqueue('singleton:cfg', () => PythonBridge.storageSingleton('cfg', cfg));
+      return enqueue(`upsert:${store}:${record.id}`, () => PythonBridge.storageUpsert(store, record));
     }
-    return result;
+    if (store === 'meta') {
+      const cfg = normalizeMeta(record);
+      if (cfg) return enqueue('singleton:cfg', () => PythonBridge.storageSingleton('cfg', cfg));
+    }
   };
 
-  const wrappedRemove = async function(store, id, ...rest){
-    const result = await originalRemove(store, id, ...rest);
-    if (COLLECTIONS.has(store)) enqueue(`delete:${store}:${id}`, () => PythonBridge.storageDelete(store, id));
-    return result;
+  window.__V13_DUAL_WRITE_REMOVE__ = async (store, id) => {
+    if (COLLECTIONS.has(store)) {
+      return enqueue(`delete:${store}:${id}`, () => PythonBridge.storageDelete(store, id));
+    }
   };
 
-  const wrappedSaveAll = async function(...args){
-    const result = await originalSaveAll(...args);
-    enqueue('full-sync', () => PythonBridge.storageImport(currentState(), { source:'dual-write-saveAll', replace:true }));
-    return result;
+  window.__V13_DUAL_WRITE_SAVE_ALL__ = async () => {
+    return enqueue('full-sync', () =>
+      PythonBridge.storageImport(currentState(), { source:'dual-write-saveAll', replace:true })
+    );
   };
-
-  app.save = wrappedSave;
-  app.removeItem = wrappedRemove;
-  app.saveAll = wrappedSaveAll;
-
-  // V12의 전역 함수 직접 호출 경로도 동일 래퍼로 연결한다.
-  if (typeof window.save === 'function') window.save = wrappedSave;
-  if (typeof window.removeItem === 'function') window.removeItem = wrappedRemove;
-  if (typeof window.saveAll === 'function') window.saveAll = wrappedSaveAll;
 
   installed = true;
   status.enabled = true;

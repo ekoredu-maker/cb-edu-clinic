@@ -173,7 +173,26 @@ def project_realtime_sessions(
             logs.append(log)
             projected += 1
         else:
-            logs[found] = {**logs[found], **log}
+            existing = logs[found]
+            manual = existing.get("manualVerification")
+            upstream_status = log.get("status")
+
+            # V14의 확정 상태는 우선한다.
+            # 아직 승인되지 않은 conducted 상태라면 V13 담당자의 수동 검증결과를 보존한다.
+            if isinstance(manual, dict) and upstream_status == "conducted":
+                manual_status = str(manual.get("status") or "")
+                if manual_status in {"conducted", "verified", "rejected"}:
+                    log["status"] = manual_status
+                    log["manualVerification"] = manual
+                    if manual_status == "verified":
+                        if existing.get("verifiedBy"):
+                            log["verifiedBy"] = existing.get("verifiedBy")
+                        if existing.get("verifiedAt"):
+                            log["verifiedAt"] = existing.get("verifiedAt")
+                        if existing.get("amount") not in (None, ""):
+                            log["amount"] = existing.get("amount")
+
+            logs[found] = {**existing, **log}
             updated += 1
 
     return {
