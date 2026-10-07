@@ -1885,3 +1885,17 @@ after update of latitude, longitude, radius_m
 on public.schools
 for each row
 execute function private.audit_school_baseline_change();
+
+
+-- ---------- V14 session RPC execution hardening ----------
+-- start_session/end_session intentionally remain SECURITY DEFINER because supporters
+-- are not granted direct INSERT/UPDATE access to sessions/session_locations.
+-- Both functions authenticate with auth.uid() and verify assignment/session ownership.
+revoke all on function public.start_session(uuid,double precision,double precision,double precision)
+  from public, anon;
+revoke all on function public.end_session(uuid,double precision,double precision,double precision)
+  from public, anon;
+grant execute on function public.start_session(uuid,double precision,double precision,double precision)
+  to authenticated;
+grant execute on function public.end_session(uuid,double precision,double precision,double precision)
+  to authenticated;
