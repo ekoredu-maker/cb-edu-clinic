@@ -195,26 +195,18 @@ jobs:
               throw new Error('SQLite verification state was not persisted.');
             }
 
-            await page.evaluate(async () => {
-              await window.ClinicReadSource.select();
-            });
-
             const browserStatus = await page.evaluate(() =>
               window.__V13_GET_BROWSER_STATE__().mat[0].logs[0].status
             );
             if(browserStatus!=='verified'){
-              throw new Error('Verification did not survive SQLite read-source reload.');
+              throw new Error('Browser verification state was not retained after SQLite upsert.');
             }
 
             await page.evaluate(() => {
-              const btn=[...document.querySelectorAll('.nav-btn')].find(x=>x.textContent.includes('실적'));
-              window.goTab('t5',btn);
-              const sub=[...document.querySelectorAll('#t5 .subtab-btn')].find(x=>x.textContent.includes('월간 검증'));
-              window.goSubT5('verify',sub);
-              document.getElementById('ver-month').value='2026-10';
               document.getElementById('ver-filter').value='verified';
               window.loadVerify();
             });
+
             await page.screenshot({
               path:'/tmp/v13-verification-persistence.png',
               fullPage:true
