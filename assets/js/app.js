@@ -218,6 +218,9 @@ async function save(store, obj){
   } else {
     saveLS();
   }
+  if(typeof window.__V13_DUAL_WRITE_SAVE__ === 'function'){
+    await window.__V13_DUAL_WRITE_SAVE__(store, obj);
+  }
 }
 
 async function saveAll(){
@@ -240,6 +243,9 @@ async function saveAll(){
   } else {
     saveLS();
   }
+  if(typeof window.__V13_DUAL_WRITE_SAVE_ALL__ === 'function'){
+    await window.__V13_DUAL_WRITE_SAVE_ALL__();
+  }
 }
 
 function saveLS(){
@@ -254,6 +260,9 @@ async function removeItem(store, id){
   markIndexDirty();
   if(storageMode === 'idb'){ await idbDelete(store, id); }
   else { saveLS(); }
+  if(typeof window.__V13_DUAL_WRITE_REMOVE__ === 'function'){
+    await window.__V13_DUAL_WRITE_REMOVE__(store, id);
+  }
 }
 
 function updateStorageBadge(){
@@ -496,7 +505,10 @@ function goTab(id, btn){
   if(id==='t2') renStaff();
   if(id==='t3') renStu();
   if(id==='t4') renMatch();
-  if(id==='t5') loadValidation();
+  if(id==='t5'){
+    try{ if(typeof fillRecordStaffSelect==='function') fillRecordStaffSelect(); }catch(e){}
+    try{ if(typeof loadStfRecord==='function') loadStfRecord(); }catch(e){}
+  }
   if(id==='t6') renTrn();
   if(id==='t7') renderPivots();
   if(id==='t8'){ refreshMgrStfSelect(); fillTTSelects(); }
@@ -3279,6 +3291,49 @@ async function quickRecAll(){
 }
 
 /* ---------- 월간 검증 ---------- */
+function verificationStatusAllowed(currentStatus, newStatus){
+  const allowed = {
+    conducted: new Set(['verified','rejected','canceled','conducted']),
+    verified: new Set(['conducted','verified']),
+    rejected: new Set(['conducted','rejected']),
+    canceled: new Set(['conducted','canceled']),
+    paid: new Set(['paid'])
+  };
+  return (allowed[currentStatus] || new Set()).has(newStatus);
+}
+
+function applyVerificationStatus(log, newStatus){
+  const currentStatus = log.status || 'conducted';
+  if(!verificationStatusAllowed(currentStatus, newStatus)){
+    return {ok:false, reason: currentStatus==='paid'
+      ? '지급완료 실적은 검증 상태를 변경할 수 없습니다.'
+      : '허용되지 않는 검증 상태 변경입니다.'};
+  }
+
+  log.status = newStatus;
+  if(log.source === 'realtime'){
+    log.manualVerification = {
+      status:newStatus,
+      by:db.cfg.confirmer || '담당 장학사',
+      at:Date.now()
+    };
+  }
+
+  if(newStatus==='verified'){
+    log.verifiedBy = db.cfg.confirmer || '담당 장학사';
+    log.verifiedAt = Date.now();
+    if(!log.amount) log.amount = calcLogAmount(log);
+  }else if(newStatus==='conducted'){
+    delete log.verifiedBy;
+    delete log.verifiedAt;
+  }else if(newStatus==='rejected'){
+    delete log.verifiedBy;
+    delete log.verifiedAt;
+  }
+
+  return {ok:true};
+}
+
 function loadVerify(){
   const ym = $('ver-month').value || thisMonth();
   if(!$('ver-month').value) $('ver-month').value = ym;
@@ -3313,7 +3368,7 @@ function loadVerify(){
     const stLbl = {conducted:'미검증',verified:'✅승인',rejected:'❌반려',canceled:'취소',paid:'지급완료'}[s]||s;
     const kindLbl = r.l.kind==='class'?'수업협력':'학습코칭';
     return `<tr>
-      <td class="center"><input type="checkbox" class="ver-chk" data-mat="${r.m.id}" data-log="${r.l.id}"></td>
+      <td class="center"><input type="checkbox" class="ver-chk" data-mat="${r.m.id}" data-log="${r.l.id}" ${s==='paid'?'disabled title="지급완료 실적은 잠금"':''}></td>
       <td>${r.l.date}</td>
       <td>${stf?stf.nm:'-'}</td>
       <td>${stu?stu.nm:'-'}</td>
@@ -3325,6 +3380,7 @@ function loadVerify(){
       <td>
         ${s==='conducted'?`<button class="btn btn-xs btn-success" onclick="verifyOne('${r.m.id}','${r.l.id}','verified')">승인</button>
           <button class="btn btn-xs btn-danger" onclick="verifyOne('${r.m.id}','${r.l.id}','rejected')">반려</button>`:
+          s==='paid'?`<span class="badge bg-yes">🔒 지급완료</span>`:
           `<button class="btn btn-xs btn-outline" onclick="verifyOne('${r.m.id}','${r.l.id}','conducted')">되돌림</button>`}
       </td>
     </tr>`;
@@ -3340,66 +3396,54 @@ async function verifyOne(matId, logId, newStatus){
   const m = db.mat.find(x=>x.id===matId); if(!m) return;
   const l = (m.logs||[]).find(x=>x.id===logId); if(!l) return;
 
-  const currentStatus = l.status || 'conducted';
-  if(currentStatus === 'paid' && newStatus !== 'paid'){
-    toast('지급완료 실적은 검증 상태를 되돌릴 수 없습니다. 정정이 필요하면 별도 정정 절차를 사용하세요.','warning');
+  const result = applyVerificationStatus(l, newStatus);
+  if(!result.ok){
+    toast(result.reason,'warning');
     return;
-  }
-
-  const allowed = {
-    conducted: new Set(['verified','rejected','canceled','conducted']),
-    verified: new Set(['conducted','verified']),
-    rejected: new Set(['conducted','rejected']),
-    canceled: new Set(['conducted','canceled']),
-    paid: new Set(['paid'])
-  };
-  if(!(allowed[currentStatus] || new Set()).has(newStatus)){
-    toast('허용되지 않는 검증 상태 변경입니다.','warning');
-    return;
-  }
-
-  l.status = newStatus;
-  if(newStatus==='verified'){
-    l.verifiedBy = db.cfg.confirmer || '담당 장학사';
-    l.verifiedAt = Date.now();
-    if(!l.amount) l.amount = calcLogAmount(l);
-  }else if(newStatus==='conducted'){
-    delete l.verifiedBy;
-    delete l.verifiedAt;
-  }else if(newStatus==='rejected'){
-    delete l.verifiedBy;
-    delete l.verifiedAt;
   }
 
   await save('mat', m);
+  toast(newStatus==='verified'?'검증 승인 저장 완료':newStatus==='rejected'?'반려 저장 완료':'미검증 상태로 되돌렸습니다.','success');
   if(typeof window.loadVerify==='function') window.loadVerify();
   if(typeof refreshDashboard==='function') refreshDashboard();
 }
 
 async function bulkVerify(newStatus){
-  const chks = document.querySelectorAll('.ver-chk:checked');
-  if(chks.length===0){ toast('항목을 선택하세요','warning'); return; }
+  const chks = Array.from(document.querySelectorAll('.ver-chk:checked')).filter(x=>!x.disabled);
+  if(chks.length===0){ toast('처리할 항목을 선택하세요','warning'); return; }
   if(!confirm2(`${chks.length}건을 "${newStatus==='verified'?'승인':'반려'}" 처리할까요?`)) return;
+
   const done = new Set();
-  for(const c of chks){
-    const matId = c.dataset.mat; const logId = c.dataset.log;
+  let changed = 0;
+  let locked = 0;
+
+  for(const checkbox of chks){
+    const matId = checkbox.dataset.mat;
+    const logId = checkbox.dataset.log;
     const m = db.mat.find(x=>x.id===matId);
     if(!m) continue;
     const l = (m.logs||[]).find(x=>x.id===logId);
     if(!l) continue;
-    l.status = newStatus;
-    if(newStatus==='verified'){
-      l.verifiedBy = db.cfg.confirmer || '학습상담사';
-      l.verifiedAt = Date.now();
-      if(!l.amount) l.amount = calcLogAmount(l);
+
+    const result = applyVerificationStatus(l, newStatus);
+    if(!result.ok){
+      locked++;
+      continue;
     }
     done.add(matId);
+    changed++;
   }
-  for(const id of done){ await save('mat', db.mat.find(x=>x.id===id)); }
-  toast(`일괄 처리 완료 (${chks.length}건)`,'success');
+
+  for(const id of done){
+    const m = db.mat.find(x=>x.id===id);
+    if(m) await save('mat', m);
+  }
+
+  toast(`일괄 처리 완료: ${changed}건${locked? ` · 잠금/제외 ${locked}건`:''}`, locked?'warning':'success');
   loadVerify();
   refreshDashboard();
 }
+
 
 /* ---------- 월별 정산 ---------- */
 function buildSettleData(ym){
@@ -6822,7 +6866,7 @@ window.__V13_APPLY_PROJECTED_STATE__ = async function(nextState){
   try{ renStaff(); }catch(e){}
   try{ renStu(); }catch(e){}
   try{ renMatch(); }catch(e){}
-  try{ loadValidation(); }catch(e){}
+  try{ if(typeof loadVerify==='function') loadVerify(); }catch(e){}
   try{ if(typeof refreshMgrStfSelect==='function') refreshMgrStfSelect(); }catch(e){}
   try{ if(typeof refreshPayStfSelect==='function') refreshPayStfSelect(); }catch(e){}
   try{ if(typeof fillTTSelects==='function') fillTTSelects(); }catch(e){}
