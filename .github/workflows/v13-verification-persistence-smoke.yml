@@ -1,0 +1,230 @@
+name: V13 Verification Persistence Smoke
+
+on:
+  pull_request:
+    paths:
+      - 'assets/js/app.js'
+      - 'assets/js/hybrid/dual-write.js'
+      - 'backend/domain/realtime_projection.py'
+      - 'backend/tests/test_realtime_projection.py'
+      - '.github/workflows/v13-verification-persistence-smoke.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'assets/js/app.js'
+      - 'assets/js/hybrid/dual-write.js'
+      - 'backend/domain/realtime_projection.py'
+      - 'backend/tests/test_realtime_projection.py'
+      - '.github/workflows/v13-verification-persistence-smoke.yml'
+  workflow_dispatch:
+
+jobs:
+  verification-persistence:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Playwright
+        run: |
+          npm install --no-save playwright@1.56.1
+          npx playwright install --with-deps chromium
+
+      - name: Start static server
+        run: |
+          python3 -m http.server 4173 > /tmp/clinic-http.log 2>&1 &
+          for i in {1..30}; do
+            curl -fsS http://127.0.0.1:4173/ >/dev/null && exit 0
+            sleep 1
+          done
+          cat /tmp/clinic-http.log
+          exit 1
+
+      - name: Verify manual approval persists through SQLite read source
+        run: |
+          node <<'NODE'
+          const { chromium } = require('playwright');
+
+          (async()=>{
+            const browser = await chromium.launch({headless:true});
+            const context = await browser.newContext({
+              viewport:{width:1440,height:900},
+              serviceWorkers:'block'
+            });
+            const page = await context.newPage();
+            const errors=[];
+            page.on('pageerror', e=>errors.push(String(e)));
+
+            let sqliteState = null;
+            let upsertCount = 0;
+
+            await page.route('https://cdn.jsdelivr.net/npm/chart.js/**', route => route.fulfill({
+              status:200, contentType:'application/javascript',
+              body:'window.Chart=class Chart{destroy(){} static getChart(){return null;}};'
+            }));
+            await page.route('https://cdnjs.cloudflare.com/ajax/libs/xlsx/**', route => route.fulfill({
+              status:200, contentType:'application/javascript',
+              body:'window.XLSX=window.XLSX||{};'
+            }));
+            await page.route('https://cdn.jsdelivr.net/gh/orioncactus/**', route => route.fulfill({
+              status:200, contentType:'text/css', body:''
+            }));
+
+            await page.route('**/api/health', route => route.fulfill({
+              status:200, contentType:'application/json',
+              body:JSON.stringify({
+                ok:true,
+                storage:{totalRecords:1,lastMigration:{at:'2026-10-07T00:00:00Z'}},
+                offline:{ready:true},
+                templates:{}
+              })
+            }));
+            await page.route('**/api/storage/status', route => route.fulfill({
+              status:200, contentType:'application/json',
+              body:JSON.stringify({totalRecords:0,lastMigration:null})
+            }));
+            await page.route('**/api/storage/compare', route => route.fulfill({
+              status:200, contentType:'application/json',
+              body:JSON.stringify({ok:true})
+            }));
+            await page.route('**/api/storage/import', async route => {
+              const body=route.request().postDataJSON();
+              sqliteState=JSON.parse(JSON.stringify(body.state));
+              await route.fulfill({
+                status:200, contentType:'application/json',
+                body:JSON.stringify({ok:true})
+              });
+            });
+            await page.route('**/api/storage/upsert', async route => {
+              const body=route.request().postDataJSON();
+              upsertCount += 1;
+              if(sqliteState && body.entityType==='mat'){
+                const idx=sqliteState.mat.findIndex(x=>x.id===body.record.id);
+                if(idx>=0) sqliteState.mat[idx]=JSON.parse(JSON.stringify(body.record));
+              }
+              await route.fulfill({
+                status:200, contentType:'application/json',
+                body:JSON.stringify({ok:true})
+              });
+            });
+            await page.route('**/api/storage/export', route => route.fulfill({
+              status:200, contentType:'application/json',
+              body:JSON.stringify({ok:true,state:sqliteState})
+            }));
+            await page.route('**/api/statistics', route => route.fulfill({
+              status:503, contentType:'application/json',
+              body:JSON.stringify({detail:'regression bypass'})
+            }));
+            await page.route('**/api/verification', route => route.fulfill({
+              status:503, contentType:'application/json',
+              body:JSON.stringify({detail:'regression bypass'})
+            }));
+            await page.route('**/api/settlement', route => route.fulfill({
+              status:503, contentType:'application/json',
+              body:JSON.stringify({detail:'regression bypass'})
+            }));
+
+            await page.goto('http://127.0.0.1:4173/?verification-persistence=1',{
+              waitUntil:'domcontentloaded',timeout:30000
+            });
+            await page.locator('#login-pw').fill('1111');
+            await page.getByRole('button',{name:'로그인',exact:true}).click();
+            await page.locator('#app-header').waitFor({state:'visible',timeout:10000});
+
+            const state = await page.evaluate(() => {
+              const s = window.__V13_GET_BROWSER_STATE__();
+              s.cfg.confirmer='검증담당자';
+              s.stf=[{id:'stf-v',nm:'지원단A',st:'active',areas:[]}];
+              s.stu=[{id:'stu-v',nm:'학생A',sc:'테스트초',scType:'초',gr:4,cls:1}];
+              s.mat=[{
+                id:'mat-v',
+                stfId:'stf-v',
+                stuId:'stu-v',
+                kind:'coach',
+                st:'active',
+                slots:[{d:'수',s:'14:00',e:'14:50'}],
+                logs:[{
+                  id:'sess-v',
+                  date:'2026-10-07',
+                  d:'2026-10-07',
+                  s:'14:00',
+                  e:'14:50',
+                  time:'14:00~14:50',
+                  minutes:50,
+                  topic:'검증 테스트',
+                  content:'검증 테스트',
+                  place:'테스트실',
+                  kind:'coach',
+                  status:'conducted',
+                  source:'realtime',
+                  verificationState:'auto_verified',
+                  settlementState:'pending'
+                }]
+              }];
+              s.trn=[];
+              return s;
+            });
+            sqliteState=JSON.parse(JSON.stringify(state));
+            await page.evaluate(async s=>{ await window.__V13_APPLY_PROJECTED_STATE__(s); },state);
+
+            await page.evaluate(() => {
+              const btn=[...document.querySelectorAll('.nav-btn')].find(x=>x.textContent.includes('실적'));
+              window.goTab('t5',btn);
+              const sub=[...document.querySelectorAll('#t5 .subtab-btn')].find(x=>x.textContent.includes('월간 검증'));
+              window.goSubT5('verify',sub);
+              document.getElementById('ver-month').value='2026-10';
+              document.getElementById('ver-filter').value='pending';
+              window.loadVerify();
+            });
+
+            await page.getByText('미검증',{exact:true}).waitFor({state:'visible'});
+            await page.getByRole('button',{name:'승인',exact:true}).click();
+            await page.getByText('✅승인',{exact:true}).waitFor({state:'visible'});
+
+            if(upsertCount < 1) throw new Error('SQLite storage upsert was not called.');
+
+            const savedStatus = sqliteState.mat[0].logs[0].status;
+            const manualStatus = sqliteState.mat[0].logs[0].manualVerification?.status;
+            if(savedStatus!=='verified' || manualStatus!=='verified'){
+              throw new Error('SQLite verification state was not persisted.');
+            }
+
+            await page.evaluate(async () => {
+              await window.ClinicReadSource.select();
+              document.getElementById('ver-filter').value='verified';
+              window.loadVerify();
+            });
+            await page.getByText('✅승인',{exact:true}).waitFor({state:'visible'});
+
+            const browserStatus = await page.evaluate(() =>
+              window.__V13_GET_BROWSER_STATE__().mat[0].logs[0].status
+            );
+            if(browserStatus!=='verified'){
+              throw new Error('Verification did not survive SQLite read-source reload.');
+            }
+
+            await page.screenshot({
+              path:'/tmp/v13-verification-persistence.png',
+              fullPage:true
+            });
+
+            if(errors.length) throw new Error(errors.join(' | '));
+            await browser.close();
+            console.log('V13 verification persistence smoke passed.');
+          })().catch(e=>{
+            console.error(e);
+            process.exit(1);
+          });
+          NODE
+
+      - name: Upload verification screenshot
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: v13-verification-persistence
+          path: /tmp/v13-verification-persistence.png
+          if-no-files-found: ignore
