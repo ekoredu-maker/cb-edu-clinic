@@ -59,7 +59,7 @@ jobs:
             const errors=[];
             page.on('pageerror', e=>errors.push(String(e)));
 
-            let sqliteState = null;
+            let lastUpsert = null;
             let upsertCount = 0;
 
             await page.route('https://cdn.jsdelivr.net/npm/chart.js/**', route => route.fulfill({
@@ -92,8 +92,6 @@ jobs:
               body:JSON.stringify({ok:true})
             }));
             await page.route('**/api/storage/import', async route => {
-              const body=route.request().postDataJSON();
-              sqliteState=JSON.parse(JSON.stringify(body.state));
               await route.fulfill({
                 status:200, contentType:'application/json',
                 body:JSON.stringify({ok:true})
@@ -102,10 +100,7 @@ jobs:
             await page.route('**/api/storage/upsert', async route => {
               const body=route.request().postDataJSON();
               upsertCount += 1;
-              if(sqliteState && body.entityType==='mat'){
-                const idx=sqliteState.mat.findIndex(x=>x.id===body.record.id);
-                if(idx>=0) sqliteState.mat[idx]=JSON.parse(JSON.stringify(body.record));
-              }
+              lastUpsert = JSON.parse(JSON.stringify(body));
               await route.fulfill({
                 status:200, contentType:'application/json',
                 body:JSON.stringify({ok:true})
@@ -113,7 +108,7 @@ jobs:
             });
             await page.route('**/api/storage/export', route => route.fulfill({
               status:200, contentType:'application/json',
-              body:JSON.stringify({ok:true,state:sqliteState})
+              body:JSON.stringify({ok:true,state:null})
             }));
             await page.route('**/api/statistics', route => route.fulfill({
               status:503, contentType:'application/json',
@@ -168,7 +163,6 @@ jobs:
               s.trn=[];
               return s;
             });
-            sqliteState=JSON.parse(JSON.stringify(state));
             await page.evaluate(async s=>{ await window.__V13_APPLY_PROJECTED_STATE__(s); },state);
 
             await page.evaluate(() => {
@@ -189,10 +183,12 @@ jobs:
 
             if(upsertCount < 1) throw new Error('SQLite storage upsert was not called.');
 
-            const savedStatus = sqliteState.mat[0].logs[0].status;
-            const manualStatus = sqliteState.mat[0].logs[0].manualVerification?.status;
-            if(savedStatus!=='verified' || manualStatus!=='verified'){
-              throw new Error('SQLite verification state was not persisted.');
+            const upsertLog = lastUpsert?.record?.logs?.find(x=>x.id==='sess-v');
+            if(lastUpsert?.entityType!=='mat' || !upsertLog){
+              throw new Error('SQLite mat upsert payload was not captured.');
+            }
+            if(upsertLog.status!=='verified' || upsertLog.manualVerification?.status!=='verified'){
+              throw new Error('SQLite upsert payload did not contain verified manual state.');
             }
 
             const browserStatus = await page.evaluate(() =>
