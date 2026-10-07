@@ -1363,25 +1363,67 @@ function sessionRows(rows){
       +verificationLabel(s.verification_state)+'</div></div>';
   }).join('')+'</div>';
 }
+function verificationAuditLabel(action){
+  const labels={
+    verification_auto_verified:'자동 재검증 통과',
+    verification_confirmed:'확인 완료',
+    verification_rejected:'반려',
+    verification_returned_to_review:'다시 검토',
+    verification_review_required:'확인 필요',
+    verification_changed:'검증상태 변경',
+    settlement_approved:'지급 승인',
+    settlement_paid:'지급 완료',
+    settlement_changed:'정산상태 변경'
+  };
+  return labels[action]||action||'처리';
+}
+function verificationAuditHtml(rows){
+  if(!rows||!rows.length) return '<div class="tiny muted" style="margin-top:8px">아직 별도 처리 이력이 없습니다.</div>';
+  return '<div style="margin-top:10px;padding-top:10px;border-top:1px solid #e5e7eb">'
+    +'<div class="tiny" style="font-weight:700;margin-bottom:5px">최근 처리이력</div>'
+    +rows.slice(0,4).map(a=>{
+      const d=a.detail||{};
+      const reason=d.to_reason||d.reason||'';
+      const when=a.created_at?new Date(a.created_at).toLocaleString('ko-KR'):'';
+      const actor=a.actor?.display_name||'시스템';
+      return '<div class="tiny muted" style="margin:3px 0">• '+esc(verificationAuditLabel(a.action))
+        +' · '+esc(actor)+' · '+esc(when)+(reason?' · '+esc(reason):'')+'</div>';
+    }).join('')+'</div>';
+}
+async function loadVerificationAudits(sessionIds){
+  if(state.demo||!state.client||!sessionIds.length) return {};
+  const q=await state.client.from('audit_logs')
+    .select('action,entity_id,detail,created_at,actor:profiles!audit_logs_actor_id_fkey(display_name)')
+    .eq('entity_type','session')
+    .in('entity_id',sessionIds)
+    .order('created_at',{ascending:false});
+  if(q.error){ console.warn('verification audit load failed',q.error); return {}; }
+  const by={};
+  (q.data||[]).forEach(a=>{ (by[a.entity_id]||(by[a.entity_id]=[])).push(a); });
+  return by;
+}
 async function pageExceptions(){
   const editable=state.sessions.filter(s=>s.session_status==='completed'&&s.settlement_state==='pending'&&['pending','review_required','confirmed','rejected'].includes(s.verification_state));
   const waiting=editable.filter(s=>s.verification_state==='pending'||s.verification_state==='review_required');
   const decided=editable.filter(s=>s.verification_state==='confirmed'||s.verification_state==='rejected');
+  const auditBy=await loadVerificationAudits(editable.map(s=>s.id));
 
   const waitingHtml=waiting.length
     ? '<div class="list">'+waiting.map(s=>'<div class="item"><div class="row between"><div><h3>'+esc(s.assignment?.supporter?.display_name||'지원단')+' · '+esc(s.student?.full_name||'학생')+'</h3><div class="meta">'
       +esc(s.work_date)+' · '+minutesBetween(s.start_at,s.end_at)+'분 · '+esc(s.verification_reason||'확인 필요')+'</div></div>'+verificationLabel(s.verification_state)+'</div>'
-      +'<div class="actions"><button class="btn btn-ghost" onclick="reverifySession(\''+s.id+'\')">자동 재검증</button><button class="btn btn-good" onclick="confirmSession(\''+s.id+'\')">확인 완료</button><button class="btn btn-danger" onclick="rejectSession(\''+s.id+'\')">반려</button></div></div>').join('')+'</div>'
+      +'<div class="actions"><button class="btn btn-ghost" onclick="reverifySession(\''+s.id+'\')">자동 재검증</button><button class="btn btn-good" onclick="confirmSession(\''+s.id+'\')">확인 완료</button><button class="btn btn-danger" onclick="rejectSession(\''+s.id+'\')">반려</button></div>'
+      +verificationAuditHtml(auditBy[s.id])+'</div>').join('')+'</div>'
     : '<div class="empty">현재 확인할 예외가 없습니다.</div>';
 
   const decidedHtml=decided.length
     ? '<div class="list">'+decided.map(s=>'<div class="item"><div class="row between"><div><h3>'+esc(s.assignment?.supporter?.display_name||'지원단')+' · '+esc(s.student?.full_name||'학생')+'</h3><div class="meta">'
       +esc(s.work_date)+' · '+minutesBetween(s.start_at,s.end_at)+'분 · '+esc(s.verification_reason||'')+'</div></div>'+verificationLabel(s.verification_state)+'</div>'
-      +'<div class="actions"><button class="btn btn-ghost" onclick="returnSessionToReview(\''+s.id+'\')">다시 검토</button></div></div>').join('')+'</div>'
+      +'<div class="actions"><button class="btn btn-ghost" onclick="returnSessionToReview(\''+s.id+'\')">다시 검토</button></div>'
+      +verificationAuditHtml(auditBy[s.id])+'</div>').join('')+'</div>'
     : '<div class="empty">지급승인 전 수정 가능한 처리 건이 없습니다.</div>';
 
   return '<div class="section-title">활동 확인 예외</div>'
-    +'<div class="notice">지급 승인 전까지 검증상태를 수정할 수 있습니다. 자동 재검증은 현재 저장된 학교 기준위치·GPS·수업시간으로 다시 계산합니다.</div>'
+    +'<div class="notice">지급 승인 전까지 검증상태를 수정할 수 있습니다. 자동 재검증은 현재 저장된 학교 기준위치·GPS·수업시간으로 다시 계산하며 처리 이력은 자동 기록됩니다.</div>'
     +'<div class="section-title" style="margin-top:18px">확인 필요</div>'+waitingHtml
     +'<div class="section-title" style="margin-top:18px">처리 완료 · 수정 가능</div>'+decidedHtml;
 }
