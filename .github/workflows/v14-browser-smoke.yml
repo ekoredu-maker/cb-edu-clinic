@@ -6,7 +6,7 @@ on:
       - 'realtime-app/**'
       - '.github/workflows/v14-browser-smoke.yml'
   push:
-    branches: [main]
+    branches: [main, v14-verification-resolution-fix]
     paths:
       - 'realtime-app/**'
       - '.github/workflows/v14-browser-smoke.yml'
