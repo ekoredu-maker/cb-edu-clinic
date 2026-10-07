@@ -1345,20 +1345,43 @@ async function pageV13Handoff(){
 async function exportV13Handoff(){
   const ym=document.getElementById('v13-handoff-month')?.value||seoulDate().slice(0,7);
   if(!/^\d{4}-\d{2}$/.test(ym)){toast('대상 월을 확인해 주세요.');return;}
+  let sessions=[];
   if(state.demo){
-    toast('실제 로그인 환경에서 연계파일을 만들 수 있습니다.','warning');
-    return;
+    sessions=state.sessions
+      .filter(s=>s.session_status==='completed'&&String(s.work_date||'').startsWith(ym))
+      .map(s=>{
+        const plan=DEMO.plans.find(p=>p.id===s.schedule_plan_id);
+        const matching=DEMO.matchingAssignments?.find(a=>a.id===s.assignment_id);
+        return {
+          id:s.id,
+          legacy_matching_id:matching?.legacy_matching_id||'',
+          work_date:s.work_date,
+          planned_start_at:s.planned_start_at,
+          planned_end_at:s.planned_end_at,
+          start_at:s.start_at,
+          end_at:s.end_at,
+          kind:matching?.kind||plan?.assignment?.kind||'coach',
+          topic:'데모 실적',
+          content:'V14 E2E 연계 검증',
+          place:plan?.place||'',
+          verification_state:s.verification_state,
+          verification_reason:s.verification_reason||'',
+          settlement_state:s.settlement_state
+        };
+      })
+      .filter(s=>s.legacy_matching_id);
+  }else{
+    const from=ym+'-01', to=monthLastDay(ym);
+    const {data,error}=await state.client
+      .from('v13_session_projection')
+      .select('*')
+      .gte('work_date',from)
+      .lte('work_date',to)
+      .order('work_date',{ascending:true})
+      .order('start_at',{ascending:true});
+    if(error){toast(error.message);return;}
+    sessions=data||[];
   }
-  const from=ym+'-01', to=monthLastDay(ym);
-  const {data,error}=await state.client
-    .from('v13_session_projection')
-    .select('*')
-    .gte('work_date',from)
-    .lte('work_date',to)
-    .order('work_date',{ascending:true})
-    .order('start_at',{ascending:true});
-  if(error){toast(error.message);return;}
-  const sessions=data||[];
   if(!sessions.length){toast('선택한 월의 완료 실적이 없습니다.','warning');return;}
   const payload={
     schema:'cb-edu-clinic-v14-v13-projection-v1',
