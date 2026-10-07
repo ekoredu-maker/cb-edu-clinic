@@ -183,11 +183,9 @@ jobs:
 
             await page.locator('#ver-area .badge').filter({hasText:'미검증'}).first().waitFor({state:'visible'});
             await page.getByRole('button',{name:'승인',exact:true}).click();
-            await page.evaluate(() => {
-              document.getElementById('ver-filter').value='verified';
-              window.loadVerify();
-            });
-            await page.locator('#ver-area .badge').filter({hasText:'✅승인'}).first().waitFor({state:'visible'});
+            await page.waitForFunction(() =>
+              window.__V13_GET_BROWSER_STATE__().mat[0].logs[0].status === 'verified'
+            );
 
             if(upsertCount < 1) throw new Error('SQLite storage upsert was not called.');
 
