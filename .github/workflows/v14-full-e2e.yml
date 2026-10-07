@@ -1,0 +1,267 @@
+name: V14 Full E2E Regression
+
+on:
+  pull_request:
+    paths:
+      - 'realtime-app/**'
+      - 'supabase/schema.sql'
+      - 'assets/js/**'
+      - 'backend/domain/realtime_projection.py'
+      - 'backend/tests/test_realtime_projection.py'
+      - '.github/workflows/v14-full-e2e.yml'
+  push:
+    branches: [main, v14-verification-resolution-fix]
+    paths:
+      - 'realtime-app/**'
+      - 'supabase/schema.sql'
+      - 'assets/js/**'
+      - 'backend/domain/realtime_projection.py'
+      - 'backend/tests/test_realtime_projection.py'
+      - '.github/workflows/v14-full-e2e.yml'
+  workflow_dispatch:
+
+jobs:
+  full-e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+          cache-dependency-path: |
+            backend/requirements.txt
+            backend/requirements-dev.txt
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Python and browser dependencies
+        run: |
+          python -m pip install -r backend/requirements-dev.txt
+          npm install --no-save playwright@1.56.1
+          npx playwright install --with-deps chromium
+
+      - name: Check JavaScript and Supabase contract
+        run: |
+          node --check realtime-app/app.js
+          node --check assets/js/hybrid/realtime-import.js
+          python - <<'PY'
+          from pathlib import Path
+          s=Path('supabase/schema.sql').read_text(encoding='utf-8')
+          required=[
+            'create or replace function public.start_session',
+            'create or replace function public.end_session',
+            'create or replace function public.reverify_session',
+            'create or replace function public.resolve_session_verification',
+            'trg_audit_session_state_change',
+            'trg_audit_school_baseline_change',
+            'grant execute on function public.start_session',
+            'grant execute on function public.end_session',
+            'grant execute on function public.resolve_session_verification',
+            '학교 기준 위치 미등록',
+            '실제 활동시간 확인',
+          ]
+          missing=[x for x in required if x.lower() not in s.lower()]
+          if missing:
+              raise SystemExit('Supabase contract missing: '+', '.join(missing))
+          print('Supabase verification contract OK')
+          PY
+
+      - name: Run V13 projection regression
+        working-directory: backend
+        run: python -m pytest -q tests/test_realtime_projection.py
+
+      - name: Start V13 Python engine and V14 static server
+        run: |
+          (cd backend && python -m uvicorn app:app --host 127.0.0.1 --port 8765 > /tmp/clinic-backend.log 2>&1 & echo $! > /tmp/clinic-backend.pid)
+          python -m http.server 4173 > /tmp/clinic-static.log 2>&1 &
+          echo $! > /tmp/clinic-static.pid
+          for i in {1..40}; do
+            curl -fsS http://127.0.0.1:8765/api/health >/dev/null &&             curl -fsS http://127.0.0.1:4173/realtime-app/ >/dev/null && exit 0
+            sleep 1
+          done
+          echo '--- backend ---'; cat /tmp/clinic-backend.log || true
+          echo '--- static ---'; cat /tmp/clinic-static.log || true
+          exit 1
+
+      - name: Run V14 to V13 full browser E2E
+        run: |
+          node <<'NODE'
+          const { chromium } = require('playwright');
+          const fs = require('fs');
+
+          async function switchRole(page, role, view) {
+            await page.evaluate(async ({role,view}) => {
+              await window.switchRole(role);
+              if(view) window.go(view);
+            }, {role,view});
+          }
+
+          (async()=>{
+            const browser=await chromium.launch({headless:true});
+            try{
+              // 1. V14: baseline -> start/end -> exception -> confirm -> settlement -> export
+              const v14ctx=await browser.newContext({
+                viewport:{width:390,height:844},
+                serviceWorkers:'block',
+                acceptDownloads:true
+              });
+              await v14ctx.addInitScript(()=>{
+                window.APP_CONFIG={demoMode:true};
+                localStorage.setItem('clinic-demo-role','admin');
+              });
+              const v14=await v14ctx.newPage();
+              const v14Errors=[];
+              v14.on('pageerror',e=>v14Errors.push(String(e)));
+              await v14.route('https://cdn.jsdelivr.net/**', route=>route.fulfill({
+                status:200,contentType:'application/javascript',
+                body:'window.supabase = window.supabase || {};'
+              }));
+              await v14.goto('http://127.0.0.1:4173/realtime-app/?full-e2e=1',{
+                waitUntil:'domcontentloaded',timeout:30000
+              });
+
+              await switchRole(v14,'admin','settings');
+              await v14.getByText('학교 기준 위치',{exact:true}).waitFor();
+              v14.once('dialog',d=>d.accept());
+              await v14.getByRole('button',{name:'현재 위치를 기준 위치로 등록'}).first().click();
+              await v14.getByText('기준 위치 등록됨',{exact:true}).first().waitFor();
+
+              await switchRole(v14,'supporter','today');
+              const start=v14.getByRole('button',{name:'수업 시작'}).first();
+              await start.waitFor();
+              await start.click();
+              const end=v14.getByRole('button',{name:'수업 종료'}).first();
+              await end.waitFor();
+              await end.click();
+              await v14.getByText('확인필요',{exact:true}).first().waitFor();
+
+              await switchRole(v14,'admin','exceptions');
+              await v14.getByText(/실제 활동시간 확인/).first().waitFor();
+              await v14.getByText('최근 처리이력',{exact:true}).first().waitFor();
+              await v14.getByText(/확인 필요/).first().waitFor();
+
+              v14.once('dialog',d=>d.accept());
+              await v14.getByRole('button',{name:'확인 완료'}).first().click();
+              await v14.getByText('처리 완료 · 수정 가능',{exact:true}).waitFor();
+              await v14.getByText(/확인 완료 · 김지원/).first().waitFor();
+
+              v14.go = undefined;
+              await v14.evaluate(()=>window.go('approvals'));
+              const confirmedCard=v14.locator('.item').filter({hasText:'확인완료'}).first();
+              await confirmedCard.getByRole('button',{name:'지급 승인'}).click();
+
+              await v14.evaluate(()=>window.go('settlement'));
+              await v14.getByText('지급 확정',{exact:true}).first().waitFor();
+              await v14.getByText('40,000원',{exact:true}).first().waitFor();
+
+              await v14.evaluate(()=>window.go('v13-handoff'));
+              const downloadPromise=v14.waitForEvent('download');
+              await v14.getByRole('button',{name:'V13 연계파일 만들기'}).click();
+              const download=await downloadPromise;
+              const handoffPath='/tmp/v14-e2e-handoff.json';
+              await download.saveAs(handoffPath);
+              const handoff=JSON.parse(fs.readFileSync(handoffPath,'utf8'));
+              if(handoff.schema!=='cb-edu-clinic-v14-v13-projection-v1') throw new Error('handoff schema mismatch');
+              if(!handoff.sessions.length) throw new Error('handoff has no sessions');
+              const approved=handoff.sessions.find(s=>s.settlement_state==='approved');
+              if(!approved) throw new Error('approved session missing from handoff');
+              if('latitude' in approved || 'longitude' in approved) throw new Error('GPS leaked into handoff');
+
+              await v14.screenshot({path:'/tmp/v14-full-e2e.png',fullPage:true});
+              if(v14Errors.length) throw new Error('V14 page errors: '+v14Errors.join(' | '));
+              await v14ctx.close();
+
+              // 2. V13: real Python engine -> projection -> SQLite/browser parity
+              const v13ctx=await browser.newContext({
+                viewport:{width:1440,height:900},
+                serviceWorkers:'block'
+              });
+              const v13=await v13ctx.newPage();
+              const v13Errors=[];
+              v13.on('pageerror',e=>v13Errors.push(String(e)));
+
+              await v13.goto('http://127.0.0.1:8765/?full-e2e=1',{
+                waitUntil:'domcontentloaded',timeout:30000
+              });
+              await v13.locator('#login-pw').fill('1111');
+              await v13.getByRole('button',{name:'로그인',exact:true}).click();
+              await v13.locator('#app-header').waitFor({state:'visible',timeout:10000});
+              await v13.locator('#v14-realtime-import-btn').waitFor({state:'visible',timeout:10000});
+
+              await v13.evaluate(async()=>{
+                const state=window.__V13_GET_BROWSER_STATE__();
+                state.stf=[
+                  {id:'stf-demo-1',nm:'김지원',st:'active'},
+                  {id:'stf-demo-2',nm:'이지원',st:'active'}
+                ];
+                state.stu=[
+                  {id:'stu-demo-1',nm:'이민서',sc:'의림초등학교',gr:4,cls:2},
+                  {id:'stu-demo-2',nm:'박서준',sc:'남당초등학교',gr:5,cls:1},
+                  {id:'stu-demo-3',nm:'최지우',sc:'홍광초등학교',gr:3,cls:3}
+                ];
+                state.mat=[
+                  {id:'JCEC-MAT-DEMO-00001',stfId:'stf-demo-1',stuId:'stu-demo-1',kind:'coach',st:'active',slots:[],logs:[]},
+                  {id:'JCEC-MAT-DEMO-00002',stfId:'stf-demo-2',stuId:'stu-demo-2',kind:'coach',st:'active',slots:[],logs:[]},
+                  {id:'JCEC-MAT-DEMO-00003',stfId:'stf-demo-1',stuId:'stu-demo-3',kind:'coach',st:'active',slots:[],logs:[]}
+                ];
+                await window.__V13_APPLY_PROJECTED_STATE__(state);
+              });
+
+              v13.once('dialog',d=>d.accept());
+              await v13.locator('#v14-realtime-import-file').setInputFiles(handoffPath);
+              await v13.getByText(/V14 실적 반영 완료:/).waitFor({state:'visible',timeout:15000});
+              await v13.getByText(/DB동기화 PASS/).waitFor({state:'visible',timeout:15000});
+
+              const first=await v13.evaluate((approvedId)=>{
+                const state=window.__V13_GET_BROWSER_STATE__();
+                const logs=state.mat.flatMap(m=>m.logs||[]);
+                return {
+                  count:logs.length,
+                  approved:logs.find(x=>x.id===approvedId)||null
+                };
+              },approved.id);
+              if(!first.approved) throw new Error('approved V14 session not projected into V13');
+              if(first.approved.status!=='verified') throw new Error('approved V14 session did not map to verified');
+              const firstCount=first.count;
+
+              // Re-import same handoff to prove session-id idempotency.
+              v13.once('dialog',d=>d.accept());
+              await v13.locator('#v14-realtime-import-file').setInputFiles(handoffPath);
+              await v13.getByText(/V14 실적 반영 완료:/).waitFor({state:'visible',timeout:15000});
+              const secondCount=await v13.evaluate(()=>
+                window.__V13_GET_BROWSER_STATE__().mat.flatMap(m=>m.logs||[]).length
+              );
+              if(secondCount!==firstCount) throw new Error('duplicate V13 logs created on re-import');
+
+              await v13.screenshot({path:'/tmp/v13-full-e2e.png',fullPage:true});
+              if(v13Errors.length) throw new Error('V13 page errors: '+v13Errors.join(' | '));
+              await v13ctx.close();
+
+              console.log('V14 full workflow -> V13 Python projection E2E passed.');
+            }finally{
+              await browser.close();
+            }
+          })().catch(e=>{
+            console.error(e);
+            process.exit(1);
+          });
+          NODE
+
+      - name: Upload E2E evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: v14-full-e2e-evidence
+          path: |
+            /tmp/v14-full-e2e.png
+            /tmp/v13-full-e2e.png
+            /tmp/v14-e2e-handoff.json
+            /tmp/clinic-backend.log
+            /tmp/clinic-static.log
+          if-no-files-found: ignore
+          retention-days: 14
