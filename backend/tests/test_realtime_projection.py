@@ -119,3 +119,69 @@ def test_unmatched_session_is_skipped_without_mutating_matchings():
     assert result["skipped"] == 1
     assert result["projected"] == 0
     assert result["state"]["mat"][0]["logs"] == []
+
+
+def test_manual_v13_verification_survives_pending_v14_reimport():
+    state = _state()
+    pending = {
+        "id": "sess-manual",
+        "legacy_matching_id": "mat-1",
+        "work_date": "2026-10-06",
+        "start_at": "2026-10-06T14:00:00+09:00",
+        "end_at": "2026-10-06T14:50:00+09:00",
+        "kind": "coach",
+        "topic": "수동검증",
+        "verification_state": "auto_verified",
+        "settlement_state": "pending",
+    }
+
+    first = project_realtime_sessions(state, [pending])
+    log = first["state"]["mat"][0]["logs"][0]
+    assert log["status"] == "conducted"
+
+    log["status"] = "verified"
+    log["verifiedBy"] = "담당자"
+    log["verifiedAt"] = 1234567890
+    log["amount"] = 40000
+    log["manualVerification"] = {
+        "status": "verified",
+        "by": "담당자",
+        "at": 1234567890,
+    }
+
+    second = project_realtime_sessions(first["state"], [pending])
+    updated = second["state"]["mat"][0]["logs"][0]
+    assert updated["status"] == "verified"
+    assert updated["manualVerification"]["status"] == "verified"
+    assert updated["verifiedBy"] == "담당자"
+    assert updated["amount"] == 40000
+
+
+def test_upstream_final_state_overrides_local_manual_verification():
+    state = _state()
+    state["mat"][0]["logs"] = [{
+        "id": "sess-final",
+        "date": "2026-10-06",
+        "d": "2026-10-06",
+        "status": "verified",
+        "source": "realtime",
+        "manualVerification": {"status": "verified", "by": "담당자", "at": 1},
+    }]
+
+    rejected = project_realtime_sessions(state, [{
+        "id": "sess-final",
+        "legacy_matching_id": "mat-1",
+        "work_date": "2026-10-06",
+        "verification_state": "rejected",
+        "settlement_state": "pending",
+    }])
+    assert rejected["state"]["mat"][0]["logs"][0]["status"] == "rejected"
+
+    paid = project_realtime_sessions(rejected["state"], [{
+        "id": "sess-final",
+        "legacy_matching_id": "mat-1",
+        "work_date": "2026-10-06",
+        "verification_state": "confirmed",
+        "settlement_state": "paid",
+    }])
+    assert paid["state"]["mat"][0]["logs"][0]["status"] == "paid"
