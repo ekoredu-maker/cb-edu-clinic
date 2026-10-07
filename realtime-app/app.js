@@ -1364,9 +1364,9 @@ function sessionRows(rows){
   }).join('')+'</div>';
 }
 async function pageExceptions(){
-  const editable=state.sessions.filter(s=>s.session_status==='completed'&&s.settlement_state==='pending'&&['pending','review_required','confirmed','rejected'].includes(s.verification_state));
+  const editable=state.sessions.filter(s=>s.session_status==='completed'&&s.settlement_state==='pending'&&['pending','auto_verified','review_required','confirmed','rejected'].includes(s.verification_state));
   const waiting=editable.filter(s=>s.verification_state==='pending'||s.verification_state==='review_required');
-  const decided=editable.filter(s=>s.verification_state==='confirmed'||s.verification_state==='rejected');
+  const decided=editable.filter(s=>s.verification_state==='auto_verified'||s.verification_state==='confirmed'||s.verification_state==='rejected');
 
   const waitingHtml=waiting.length
     ? '<div class="list">'+waiting.map(s=>'<div class="item"><div class="row between"><div><h3>'+esc(s.assignment?.supporter?.display_name||'지원단')+' · '+esc(s.student?.full_name||'학생')+'</h3><div class="meta">'
