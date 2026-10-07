@@ -1364,12 +1364,26 @@ function sessionRows(rows){
   }).join('')+'</div>';
 }
 async function pageExceptions(){
-  const rows=state.sessions.filter(s=>s.verification_state==='review_required');
-  if(!rows.length) return '<div class="section-title">활동 확인 예외</div><div class="notice">정상 활동은 자동으로 처리되었습니다.</div><div class="empty">현재 확인할 예외가 없습니다.</div>';
-  return '<div class="section-title">활동 확인 예외</div><div class="notice">이 화면의 건만 사람이 확인하면 됩니다.</div><div class="list">'
-    +rows.map(s=>'<div class="item"><div class="row between"><div><h3>'+esc(s.assignment?.supporter?.display_name||'지원단')+' · '+esc(s.student?.full_name||'학생')+'</h3><div class="meta">'
+  const editable=state.sessions.filter(s=>s.session_status==='completed'&&s.settlement_state==='pending'&&['pending','review_required','confirmed','rejected'].includes(s.verification_state));
+  const waiting=editable.filter(s=>s.verification_state==='pending'||s.verification_state==='review_required');
+  const decided=editable.filter(s=>s.verification_state==='confirmed'||s.verification_state==='rejected');
+
+  const waitingHtml=waiting.length
+    ? '<div class="list">'+waiting.map(s=>'<div class="item"><div class="row between"><div><h3>'+esc(s.assignment?.supporter?.display_name||'지원단')+' · '+esc(s.student?.full_name||'학생')+'</h3><div class="meta">'
       +esc(s.work_date)+' · '+minutesBetween(s.start_at,s.end_at)+'분 · '+esc(s.verification_reason||'확인 필요')+'</div></div>'+verificationLabel(s.verification_state)+'</div>'
-      +'<div class="actions"><button class="btn btn-good" onclick="confirmSession(\''+s.id+'\')">확인 완료</button><button class="btn btn-danger" onclick="rejectSession(\''+s.id+'\')">반려</button></div></div>').join('')+'</div>';
+      +'<div class="actions"><button class="btn btn-ghost" onclick="reverifySession(\''+s.id+'\')">자동 재검증</button><button class="btn btn-good" onclick="confirmSession(\''+s.id+'\')">확인 완료</button><button class="btn btn-danger" onclick="rejectSession(\''+s.id+'\')">반려</button></div></div>').join('')+'</div>'
+    : '<div class="empty">현재 확인할 예외가 없습니다.</div>';
+
+  const decidedHtml=decided.length
+    ? '<div class="list">'+decided.map(s=>'<div class="item"><div class="row between"><div><h3>'+esc(s.assignment?.supporter?.display_name||'지원단')+' · '+esc(s.student?.full_name||'학생')+'</h3><div class="meta">'
+      +esc(s.work_date)+' · '+minutesBetween(s.start_at,s.end_at)+'분 · '+esc(s.verification_reason||'')+'</div></div>'+verificationLabel(s.verification_state)+'</div>'
+      +'<div class="actions"><button class="btn btn-ghost" onclick="returnSessionToReview(\''+s.id+'\')">다시 검토</button></div></div>').join('')+'</div>'
+    : '<div class="empty">지급승인 전 수정 가능한 처리 건이 없습니다.</div>';
+
+  return '<div class="section-title">활동 확인 예외</div>'
+    +'<div class="notice">지급 승인 전까지 검증상태를 수정할 수 있습니다. 자동 재검증은 현재 저장된 학교 기준위치·GPS·수업시간으로 다시 계산합니다.</div>'
+    +'<div class="section-title" style="margin-top:18px">확인 필요</div>'+waitingHtml
+    +'<div class="section-title" style="margin-top:18px">처리 완료 · 수정 가능</div>'+decidedHtml;
 }
 async function pageApprovals(){
   const rows=state.sessions.filter(s=>(s.verification_state==='auto_verified'||s.verification_state==='confirmed')&&s.settlement_state==='pending');
@@ -1593,16 +1607,38 @@ async function reverifySession(id){
   toast(data==='auto_verified'?'자동 재검증을 통과했습니다.':'재검증 결과 확인이 필요합니다.');
   renderPage();
 }
+async function resolveSessionVerification(id,action,reason){
+  if(state.demo){
+    const s=DEMO.sessions.find(x=>x.id===id);
+    if(!s)return;
+    if(action==='confirm'){s.verification_state='confirmed';s.verification_reason=reason||'담당자 확인 완료';}
+    if(action==='reject'){s.verification_state='rejected';s.verification_reason=reason||'반려';}
+    if(action==='review'){s.verification_state='review_required';s.verification_reason=reason||'담당자 재검토로 전환';}
+    await refreshData();renderPage();return true;
+  }
+  const {data,error}=await state.client.rpc('resolve_session_verification',{
+    p_session_id:id,
+    p_action:action,
+    p_reason:reason||null
+  });
+  if(error){toast(error.message);return false;}
+  await refreshData();
+  const label=data?.verification_state==='confirmed'?'확인 완료':data?.verification_state==='rejected'?'반려':'다시 검토';
+  toast('검증상태를 '+label+'로 변경했습니다.');
+  renderPage();
+  return true;
+}
 async function confirmSession(id){
-  if(state.demo){const s=DEMO.sessions.find(x=>x.id===id);if(s)s.verification_state='confirmed';await refreshData();renderPage();return;}
-  const {error}=await state.client.from('sessions').update({verification_state:'confirmed',verification_reason:'담당자 확인 완료'}).eq('id',id);
-  if(error){toast(error.message);return;}await refreshData();renderPage();
+  if(!confirm('이 실적을 확인 완료 처리하시겠습니까?'))return;
+  await resolveSessionVerification(id,'confirm','담당자 확인 완료');
 }
 async function rejectSession(id){
   const reason=prompt('반려 사유를 입력하세요.');if(!reason)return;
-  if(state.demo){const s=DEMO.sessions.find(x=>x.id===id);if(s){s.verification_state='rejected';s.verification_reason=reason;}await refreshData();renderPage();return;}
-  const {error}=await state.client.from('sessions').update({verification_state:'rejected',verification_reason:reason}).eq('id',id);
-  if(error){toast(error.message);return;}await refreshData();renderPage();
+  await resolveSessionVerification(id,'reject',reason);
+}
+async function returnSessionToReview(id){
+  if(!confirm('이 실적을 다시 검토 상태로 되돌리시겠습니까?'))return;
+  await resolveSessionVerification(id,'review','담당자 재검토로 전환');
 }
 async function approveSession(id){
   if(state.demo){const s=DEMO.sessions.find(x=>x.id===id);if(s)s.settlement_state='approved';await refreshData();renderPage();return;}
@@ -1630,6 +1666,6 @@ window.syncScheduleMode=syncScheduleMode; window.syncScheduleAssignment=syncSche
 window.exportV13Handoff=exportV13Handoff;
 window.startLesson=startLesson; window.endLesson=endLesson; window.saveLessonRecord=saveLessonRecord; window.setSchoolCurrentLocation=setSchoolCurrentLocation; window.uploadMyIdPhoto=uploadMyIdPhoto;
 window.addCounseling=addCounseling; window.requestScheduleChange=requestScheduleChange;
-window.reverifySession=reverifySession; window.confirmSession=confirmSession; window.rejectSession=rejectSession; window.approveSession=approveSession; window.approveAll=approveAll;
+window.reverifySession=reverifySession; window.confirmSession=confirmSession; window.rejectSession=rejectSession; window.returnSessionToReview=returnSessionToReview; window.approveSession=approveSession; window.approveAll=approveAll;
 
 init().catch(e=>{$app.innerHTML='<div class="login"><h2>초기화 오류</h2><p>'+esc(e.message||e)+'</p></div>';});
