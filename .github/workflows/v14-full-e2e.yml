@@ -10,7 +10,7 @@ on:
       - 'backend/tests/test_realtime_projection.py'
       - '.github/workflows/v14-full-e2e.yml'
   push:
-    branches: [main, v14-verification-resolution-fix]
+    branches: [main]
     paths:
       - 'realtime-app/**'
       - 'supabase/schema.sql'
