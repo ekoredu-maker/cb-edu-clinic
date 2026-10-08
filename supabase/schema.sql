@@ -645,8 +645,378 @@ begin
 end;
 $function$;
 
-revoke execute on function public.end_session(uuid,double precision,double precision,double precision) from public, anon;
+revoke all on function public.start_session(uuid,double precision,double precision,double precision) from public, anon;
+revoke all on function public.end_session(uuid,double precision,double precision,double precision) from public, anon;
+grant execute on function public.start_session(uuid,double precision,double precision,double precision) to authenticated;
 grant execute on function public.end_session(uuid,double precision,double precision,double precision) to authenticated;
+
+alter table public.profiles enable row level security;
+alter table public.program_settings enable row level security;
+alter table public.schools enable row level security;
+alter table public.students enable row level security;
+alter table public.assignments enable row level security;
+alter table public.schedule_plans enable row level security;
+alter table public.sessions enable row level security;
+alter table public.session_locations enable row level security;
+alter table public.lesson_records enable row level security;
+alter table public.counseling_records enable row level security;
+alter table public.change_requests enable row level security;
+alter table public.notices enable row level security;
+alter table public.notice_reads enable row level security;
+alter table public.push_subscriptions enable row level security;
+alter table public.audit_logs enable row level security;
+
+drop policy if exists profiles_select on public.profiles;
+create policy profiles_select on public.profiles for select to authenticated
+using (id = (select auth.uid()) or private.is_office_user());
+
+drop policy if exists settings_select on public.program_settings;
+create policy settings_select on public.program_settings for select to authenticated
+using (private.is_office_user());
+
+drop policy if exists settings_write on public.program_settings;
+create policy settings_write on public.program_settings for update to authenticated
+using (private.has_role('admin') or private.has_role('supervisor'))
+with check (private.has_role('admin') or private.has_role('supervisor'));
+
+drop policy if exists schools_select on public.schools;
+create policy schools_select on public.schools for select to authenticated
+using (
+  private.is_office_user()
+  or exists (
+    select 1
+    from public.assignments a
+    join public.students s on s.id = a.student_id
+    where a.supporter_id = (select auth.uid())
+      and a.status = 'active'
+      and s.school_id = schools.id
+  )
+);
+
+drop policy if exists schools_write on public.schools;
+create policy schools_write on public.schools for all to authenticated
+using (private.is_office_user())
+with check (private.is_office_user());
+
+drop policy if exists students_select on public.students;
+create policy students_select on public.students for select to authenticated
+using (
+  private.is_office_user()
+  or exists (
+    select 1 from public.assignments a
+    where a.student_id = students.id
+      and a.supporter_id = (select auth.uid())
+      and a.status = 'active'
+  )
+);
+
+drop policy if exists students_write on public.students;
+create policy students_write on public.students for all to authenticated
+using (private.is_office_user())
+with check (private.is_office_user());
+
+drop policy if exists assignments_select on public.assignments;
+create policy assignments_select on public.assignments for select to authenticated
+using (private.is_office_user() or supporter_id = (select auth.uid()));
+
+drop policy if exists assignments_write on public.assignments;
+create policy assignments_write on public.assignments for all to authenticated
+using (private.is_office_user())
+with check (private.is_office_user());
+
+drop policy if exists plans_select on public.schedule_plans;
+create policy plans_select on public.schedule_plans for select to authenticated
+using (
+  private.is_office_user()
+  or exists (
+    select 1 from public.assignments a
+    where a.id = schedule_plans.assignment_id
+      and a.supporter_id = (select auth.uid())
+  )
+);
+
+drop policy if exists plans_write on public.schedule_plans;
+create policy plans_write on public.schedule_plans for all to authenticated
+using (private.is_office_user())
+with check (private.is_office_user());
+
+drop policy if exists sessions_select on public.sessions;
+create policy sessions_select on public.sessions for select to authenticated
+using (private.is_office_user() or supporter_id = (select auth.uid()));
+
+drop policy if exists sessions_office_update on public.sessions;
+create policy sessions_office_update on public.sessions for update to authenticated
+using (private.is_office_user())
+with check (private.is_office_user());
+
+drop policy if exists locations_select on public.session_locations;
+create policy locations_select on public.session_locations for select to authenticated
+using (
+  private.is_office_user()
+  or exists (
+    select 1 from public.sessions s
+    where s.id = session_locations.session_id
+      and s.supporter_id = (select auth.uid())
+  )
+);
+
+drop policy if exists lessons_select on public.lesson_records;
+create policy lessons_select on public.lesson_records for select to authenticated
+using (private.is_office_user() or supporter_id = (select auth.uid()));
+
+drop policy if exists lessons_insert on public.lesson_records;
+create policy lessons_insert on public.lesson_records for insert to authenticated
+with check (
+  supporter_id = (select auth.uid())
+  and exists (
+    select 1 from public.sessions s
+    where s.id = lesson_records.session_id
+      and s.supporter_id = (select auth.uid())
+  )
+);
+
+drop policy if exists lessons_update on public.lesson_records;
+create policy lessons_update on public.lesson_records for update to authenticated
+using (supporter_id = (select auth.uid()) or private.is_office_user())
+with check (supporter_id = (select auth.uid()) or private.is_office_user());
+
+drop policy if exists counseling_select on public.counseling_records;
+create policy counseling_select on public.counseling_records for select to authenticated
+using (private.is_office_user() or author_id = (select auth.uid()));
+
+drop policy if exists counseling_insert on public.counseling_records;
+create policy counseling_insert on public.counseling_records for insert to authenticated
+with check (
+  author_id = (select auth.uid())
+  and (
+    private.is_office_user()
+    or exists (
+      select 1 from public.assignments a
+      where a.student_id = counseling_records.student_id
+        and a.supporter_id = (select auth.uid())
+        and a.status = 'active'
+    )
+  )
+);
+
+drop policy if exists counseling_update on public.counseling_records;
+create policy counseling_update on public.counseling_records for update to authenticated
+using (author_id = (select auth.uid()) or private.is_office_user())
+with check (author_id = (select auth.uid()) or private.is_office_user());
+
+drop policy if exists requests_select on public.change_requests;
+create policy requests_select on public.change_requests for select to authenticated
+using (private.is_office_user() or requester_id = (select auth.uid()));
+
+drop policy if exists requests_insert on public.change_requests;
+create policy requests_insert on public.change_requests for insert to authenticated
+with check (requester_id = (select auth.uid()));
+
+drop policy if exists requests_office_update on public.change_requests;
+create policy requests_office_update on public.change_requests for update to authenticated
+using (private.is_office_user())
+with check (private.is_office_user());
+
+drop policy if exists notices_select on public.notices;
+create policy notices_select on public.notices for select to authenticated
+using (
+  published = true
+  and (expires_at is null or expires_at > now())
+  and exists (
+    select 1 from public.profiles p
+    where p.id = (select auth.uid())
+      and p.active = true
+      and p.roles && notices.target_roles
+  )
+);
+
+drop policy if exists notices_write on public.notices;
+create policy notices_write on public.notices for all to authenticated
+using (private.is_office_user())
+with check (private.is_office_user());
+
+drop policy if exists notice_reads_select on public.notice_reads;
+create policy notice_reads_select on public.notice_reads for select to authenticated
+using (user_id = (select auth.uid()) or private.is_office_user());
+
+drop policy if exists notice_reads_insert on public.notice_reads;
+create policy notice_reads_insert on public.notice_reads for insert to authenticated
+with check (user_id = (select auth.uid()));
+
+drop policy if exists push_select on public.push_subscriptions;
+create policy push_select on public.push_subscriptions for select to authenticated
+using (user_id = (select auth.uid()));
+
+drop policy if exists push_insert on public.push_subscriptions;
+create policy push_insert on public.push_subscriptions for insert to authenticated
+with check (user_id = (select auth.uid()));
+
+drop policy if exists push_update on public.push_subscriptions;
+create policy push_update on public.push_subscriptions for update to authenticated
+using (user_id = (select auth.uid()))
+with check (user_id = (select auth.uid()));
+
+drop policy if exists push_delete on public.push_subscriptions;
+create policy push_delete on public.push_subscriptions for delete to authenticated
+using (user_id = (select auth.uid()));
+
+drop policy if exists audit_select on public.audit_logs;
+create policy audit_select on public.audit_logs for select to authenticated
+using (private.is_office_user());
+
+revoke all on all tables in schema public from anon;
+revoke all on all sequences in schema public from anon;
+
+grant select on public.profiles to authenticated;
+grant select, update on public.program_settings to authenticated;
+grant select, insert, update, delete on public.schools to authenticated;
+grant select, insert, update, delete on public.students to authenticated;
+grant select, insert, update, delete on public.assignments to authenticated;
+grant select, insert, update, delete on public.schedule_plans to authenticated;
+grant select, update on public.sessions to authenticated;
+grant select on public.session_locations to authenticated;
+grant select, insert, update on public.lesson_records to authenticated;
+grant select, insert, update on public.counseling_records to authenticated;
+grant select, insert, update on public.change_requests to authenticated;
+grant select, insert, update, delete on public.notices to authenticated;
+grant select, insert on public.notice_reads to authenticated;
+grant select, insert, update, delete on public.push_subscriptions to authenticated;
+grant select on public.audit_logs to authenticated;
+
+do $$
+begin
+  if not exists (
+    select 1
+    from pg_publication_tables
+    where pubname='supabase_realtime'
+      and schemaname='public'
+      and tablename='sessions'
+  ) then
+    alter publication supabase_realtime add table public.sessions;
+  end if;
+
+  if not exists (
+    select 1
+    from pg_publication_tables
+    where pubname='supabase_realtime'
+      and schemaname='public'
+      and tablename='notices'
+  ) then
+    alter publication supabase_realtime add table public.notices;
+  end if;
+end $$;
+
+
+-- ---------- V14 -> V13 projection ----------
+create or replace view public.v13_session_projection
+with (security_invoker = true)
+as
+select
+  s.id,
+  a.legacy_matching_id,
+  p.legacy_staff_id,
+  st.legacy_student_id,
+  s.work_date,
+  s.planned_start_at,
+  s.planned_end_at,
+  s.start_at,
+  s.end_at,
+  case
+    when s.start_at is not null and s.end_at is not null
+    then round(extract(epoch from (s.end_at - s.start_at)) / 60.0)::integer
+    else null
+  end as actual_minutes,
+  a.kind,
+  coalesce(lr.topic, '') as topic,
+  coalesce(lr.content, lr.topic, '') as content,
+  coalesce(sp.place, sc.name, '') as place,
+  sc.name as school_name,
+  s.verification_state,
+  s.settlement_state,
+  s.verification_reason
+from public.sessions s
+join public.assignments a on a.id = s.assignment_id
+join public.profiles p on p.id = s.supporter_id
+join public.students st on st.id = s.student_id
+left join public.schedule_plans sp on sp.id = s.schedule_plan_id
+left join public.schools sc on sc.id = sp.school_id
+left join public.lesson_records lr on lr.session_id = s.id
+where s.session_status = 'completed';
+
+revoke all on public.v13_session_projection from public, anon;
+grant select on public.v13_session_projection to authenticated;
+
+
+-- ---------- V14.4 mobile ID / admin operations ----------
+alter table public.profiles
+  add column if not exists mobile_id_no text,
+  add column if not exists mobile_id_issued_at timestamptz,
+  add column if not exists mobile_id_expires_on date,
+  add column if not exists mobile_id_active boolean not null default false;
+
+create unique index if not exists profiles_mobile_id_no_uq
+  on public.profiles(mobile_id_no)
+  where mobile_id_no is not null;
+
+insert into storage.buckets(id,name,public,file_size_limit,allowed_mime_types)
+values(
+  'supporter-id-photos',
+  'supporter-id-photos',
+  false,
+  3145728,
+  array['image/jpeg','image/png','image/webp']::text[]
+)
+on conflict(id) do update
+set public=false,
+    file_size_limit=excluded.file_size_limit,
+    allowed_mime_types=excluded.allowed_mime_types;
+
+drop policy if exists supporter_id_photo_select on storage.objects;
+create policy supporter_id_photo_select
+on storage.objects
+for select
+to authenticated
+using (
+  bucket_id='supporter-id-photos'
+  and (
+    (storage.foldername(name))[1]=(select auth.uid())::text
+    or private.is_office_user()
+  )
+);
+
+drop policy if exists supporter_id_photo_insert on storage.objects;
+create policy supporter_id_photo_insert
+on storage.objects
+for insert
+to authenticated
+with check (
+  bucket_id='supporter-id-photos'
+  and (storage.foldername(name))[1]=(select auth.uid())::text
+);
+
+drop policy if exists supporter_id_photo_update on storage.objects;
+create policy supporter_id_photo_update
+on storage.objects
+for update
+to authenticated
+using (
+  bucket_id='supporter-id-photos'
+  and (storage.foldername(name))[1]=(select auth.uid())::text
+)
+with check (
+  bucket_id='supporter-id-photos'
+  and (storage.foldername(name))[1]=(select auth.uid())::text
+);
+
+drop policy if exists supporter_id_photo_delete on storage.objects;
+create policy supporter_id_photo_delete
+on storage.objects
+for delete
+to authenticated
+using (
+  bucket_id='supporter-id-photos'
+  and (storage.foldername(name))[1]=(select auth.uid())::text
+);
 
 create or replace function public.set_school_baseline_location(
   p_school_id uuid,
