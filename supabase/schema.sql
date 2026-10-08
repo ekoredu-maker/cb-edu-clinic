@@ -524,7 +524,7 @@ returns text
 language plpgsql
 security definer
 set search_path = public, pg_temp
-as $$
+as $function$
 declare
   v_uid uuid := (select auth.uid());
   v_session public.sessions;
@@ -542,6 +542,7 @@ declare
   v_min_ratio numeric;
   v_result text;
   v_reason text;
+  v_has_school_baseline boolean;
 begin
   if v_uid is null then raise exception '로그인이 필요합니다.'; end if;
   if p_latitude not between -90 and 90 or p_longitude not between -180 and 180 then
@@ -549,19 +550,17 @@ begin
   end if;
 
   select * into v_session from public.sessions where id = p_session_id;
-
   if v_session.id is null or v_session.supporter_id <> v_uid then
     raise exception '이 수업을 종료할 권한이 없습니다.';
   end if;
-
   if v_session.start_at is null then raise exception '시작 기록이 없습니다.'; end if;
-
   if v_session.end_at is not null or v_session.session_status = 'completed' then
     raise exception '이미 종료된 수업입니다.';
   end if;
 
   select * into v_plan from public.schedule_plans where id = v_session.schedule_plan_id;
   select * into v_school from public.schools where id = v_plan.school_id;
+  v_has_school_baseline := v_school.latitude is not null and v_school.longitude is not null;
 
   select
     coalesce(v_school.radius_m, ps.default_location_radius_m),
@@ -570,22 +569,18 @@ begin
     ps.start_window_after_min,
     ps.min_duration_ratio
   into v_radius, v_max_accuracy, v_before, v_after, v_min_ratio
-  from public.program_settings ps
-  where ps.id = 1;
+  from public.program_settings ps where ps.id = 1;
 
   v_distance := public.distance_meters(
     p_latitude, p_longitude, v_school.latitude, v_school.longitude
   );
 
   insert into public.session_locations(
-    session_id, point_type, latitude, longitude, accuracy_m,
-    distance_m, within_radius, captured_at
+    session_id, point_type, latitude, longitude, accuracy_m, distance_m, within_radius, captured_at
   )
   values(
-    p_session_id, 'end', p_latitude, p_longitude, p_accuracy_m,
-    v_distance,
-    case when v_distance is null then null else v_distance <= v_radius end,
-    v_now
+    p_session_id, 'end', p_latitude, p_longitude, p_accuracy_m, v_distance,
+    case when v_distance is null then null else v_distance <= v_radius end, v_now
   )
   on conflict(session_id, point_type) do nothing;
 
@@ -596,7 +591,9 @@ begin
   v_planned_minutes := extract(epoch from (v_session.planned_end_at - v_session.planned_start_at)) / 60.0;
   v_actual_minutes := extract(epoch from (v_now - v_session.start_at)) / 60.0;
 
-  if coalesce(v_start_loc.within_radius, false)
+  if v_has_school_baseline
+     and v_start_loc.id is not null
+     and coalesce(v_start_loc.within_radius, false)
      and coalesce(v_distance <= v_radius, false)
      and (v_start_loc.accuracy_m is null or v_start_loc.accuracy_m <= v_max_accuracy)
      and (p_accuracy_m is null or p_accuracy_m <= v_max_accuracy)
@@ -610,10 +607,17 @@ begin
   else
     v_result := 'review_required';
     v_reason := concat_ws(' / ',
-      case when not coalesce(v_start_loc.within_radius,false) then '시작 위치 확인' end,
-      case when not coalesce(v_distance <= v_radius,false) then '종료 위치 확인' end,
-      case when v_start_loc.accuracy_m is not null and v_start_loc.accuracy_m > v_max_accuracy then '시작 GPS 정확도 확인' end,
-      case when p_accuracy_m is not null and p_accuracy_m > v_max_accuracy then '종료 GPS 정확도 확인' end,
+      case when not v_has_school_baseline then '학교 기준 위치 미등록' end,
+      case when v_start_loc.id is null then '시작 위치 기록 없음' end,
+      case when v_has_school_baseline and v_start_loc.id is not null
+                 and not coalesce(v_start_loc.within_radius,false)
+           then '시작 위치 확인' end,
+      case when v_has_school_baseline and not coalesce(v_distance <= v_radius,false)
+           then '종료 위치 확인' end,
+      case when v_start_loc.accuracy_m is not null and v_start_loc.accuracy_m > v_max_accuracy
+           then '시작 GPS 정확도 확인' end,
+      case when p_accuracy_m is not null and p_accuracy_m > v_max_accuracy
+           then '종료 GPS 정확도 확인' end,
       case when v_session.start_at < v_session.planned_start_at - make_interval(mins => v_before)
              or v_session.start_at > v_session.planned_start_at + make_interval(mins => v_after)
            then '계획시간 대비 시작시각 확인' end,
@@ -621,9 +625,7 @@ begin
              or v_actual_minutes > v_planned_minutes + 120
            then '실제 활동시간 확인' end
     );
-    if coalesce(v_reason,'') = '' then
-      v_reason := '자동검증 조건 확인 필요';
-    end if;
+    if coalesce(v_reason,'') = '' then v_reason := '자동검증 조건 확인 필요'; end if;
   end if;
 
   update public.sessions
@@ -635,22 +637,13 @@ begin
   where id = p_session_id;
 
   insert into public.audit_logs(actor_id, action, entity_type, entity_id, detail)
-  values(
-    v_uid,
-    'session_end',
-    'session',
-    p_session_id::text,
-    jsonb_build_object(
-      'distance_m', v_distance,
-      'accuracy_m', p_accuracy_m,
-      'actual_minutes', v_actual_minutes,
-      'verification', v_result
-    )
-  );
+  values(v_uid, 'session_end', 'session', p_session_id::text,
+    jsonb_build_object('distance_m', v_distance, 'accuracy_m', p_accuracy_m,
+                       'actual_minutes', v_actual_minutes, 'verification', v_result));
 
   return v_result;
 end;
-$$;
+$function$;
 
 revoke all on function public.start_session(uuid,double precision,double precision,double precision) from public, anon;
 revoke all on function public.end_session(uuid,double precision,double precision,double precision) from public, anon;
@@ -2157,4 +2150,122 @@ $$;
 revoke all on function public.resolve_session_verification(uuid,text,text)
   from public, anon;
 grant execute on function public.resolve_session_verification(uuid,text,text)
+  to authenticated;
+
+
+-- ---------- V14 verification audit trail ----------
+create or replace function private.audit_session_state_change()
+returns trigger
+language plpgsql
+security definer
+set search_path = public, private, pg_temp
+as $$
+declare
+  v_actor uuid := (select auth.uid());
+  v_action text;
+  v_detail jsonb;
+begin
+  if old.verification_state is distinct from new.verification_state
+     or old.verification_reason is distinct from new.verification_reason then
+    v_action := case
+      when new.verification_state='auto_verified' then 'verification_auto_verified'
+      when new.verification_state='confirmed' then 'verification_confirmed'
+      when new.verification_state='rejected' then 'verification_rejected'
+      when new.verification_state='review_required' and old.verification_state in ('confirmed','rejected')
+        then 'verification_returned_to_review'
+      when new.verification_state='review_required' then 'verification_review_required'
+      else 'verification_changed'
+    end;
+    v_detail := jsonb_build_object(
+      'from_state', old.verification_state,
+      'to_state', new.verification_state,
+      'from_reason', old.verification_reason,
+      'to_reason', new.verification_reason,
+      'settlement_state', new.settlement_state
+    );
+    insert into public.audit_logs(actor_id,action,entity_type,entity_id,detail)
+    values(v_actor,v_action,'session',new.id::text,v_detail);
+  end if;
+
+  if old.settlement_state is distinct from new.settlement_state then
+    insert into public.audit_logs(actor_id,action,entity_type,entity_id,detail)
+    values(
+      v_actor,
+      case
+        when new.settlement_state='approved' then 'settlement_approved'
+        when new.settlement_state='paid' then 'settlement_paid'
+        else 'settlement_changed'
+      end,
+      'session',
+      new.id::text,
+      jsonb_build_object(
+        'from_state',old.settlement_state,
+        'to_state',new.settlement_state,
+        'verification_state',new.verification_state
+      )
+    );
+  end if;
+  return new;
+end;
+$$;
+
+revoke all on function private.audit_session_state_change() from public, anon, authenticated;
+
+drop trigger if exists trg_audit_session_state_change on public.sessions;
+create trigger trg_audit_session_state_change
+after update of verification_state, verification_reason, settlement_state
+on public.sessions
+for each row
+execute function private.audit_session_state_change();
+
+create or replace function private.audit_school_baseline_change()
+returns trigger
+language plpgsql
+security definer
+set search_path = public, private, pg_temp
+as $$
+declare
+  v_actor uuid := (select auth.uid());
+begin
+  if old.latitude is distinct from new.latitude
+     or old.longitude is distinct from new.longitude
+     or old.radius_m is distinct from new.radius_m then
+    insert into public.audit_logs(actor_id,action,entity_type,entity_id,detail)
+    values(
+      v_actor,
+      'school_baseline_changed',
+      'school',
+      new.id::text,
+      jsonb_build_object(
+        'school_name',new.name,
+        'baseline_registered',(new.latitude is not null and new.longitude is not null),
+        'radius_m',new.radius_m
+      )
+    );
+  end if;
+  return new;
+end;
+$$;
+
+revoke all on function private.audit_school_baseline_change() from public, anon, authenticated;
+
+drop trigger if exists trg_audit_school_baseline_change on public.schools;
+create trigger trg_audit_school_baseline_change
+after update of latitude, longitude, radius_m
+on public.schools
+for each row
+execute function private.audit_school_baseline_change();
+
+
+-- ---------- V14 session RPC execution hardening ----------
+-- start_session/end_session intentionally remain SECURITY DEFINER because supporters
+-- are not granted direct INSERT/UPDATE access to sessions/session_locations.
+-- Both functions authenticate with auth.uid() and verify assignment/session ownership.
+revoke all on function public.start_session(uuid,double precision,double precision,double precision)
+  from public, anon;
+revoke all on function public.end_session(uuid,double precision,double precision,double precision)
+  from public, anon;
+grant execute on function public.start_session(uuid,double precision,double precision,double precision)
+  to authenticated;
+grant execute on function public.end_session(uuid,double precision,double precision,double precision)
   to authenticated;

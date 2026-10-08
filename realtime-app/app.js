@@ -65,6 +65,12 @@ const DEMO = {
   requests: [
     {id:'r1',request_type:'schedule',reason:'학생 방과후 일정 변경',status:'pending',created_at:new Date().toISOString()}
   ],
+  schools: [
+    {id:'demo-school-1',name:'의림초등학교',latitude:null,longitude:null,radius_m:null,active:true},
+    {id:'demo-school-2',name:'남당초등학교',latitude:null,longitude:null,radius_m:null,active:true},
+    {id:'demo-school-3',name:'홍광초등학교',latitude:null,longitude:null,radius_m:null,active:true}
+  ],
+  auditLogs: [],
   settings: {
     org_name:'제천교육지원청',
     coach_rate:40000,
@@ -117,6 +123,35 @@ function ensureDemoData(){
       verification_state:'auto_verified',settlement_state:'pending',verification_reason:'자동검증 통과'
     }
   ];
+}
+
+function demoAudit(action,entityType,entityId,detail={}){
+  const row={
+    id:'demo-audit-'+(DEMO.auditLogs.length+1),
+    action,
+    entity_type:entityType,
+    entity_id:String(entityId),
+    detail,
+    created_at:new Date().toISOString(),
+    actor:{display_name:DEMO.profile.display_name}
+  };
+  DEMO.auditLogs.unshift(row);
+  return row;
+}
+function demoVerificationResult(s,prefix=''){
+  const plan=DEMO.plans.find(p=>p.id===s.schedule_plan_id);
+  const school=DEMO.schools.find(sc=>sc.id===plan?.school?.id);
+  const baseline=!!(school&&school.latitude!==null&&school.longitude!==null);
+  const planned=Math.max(0,minutesBetween(s.planned_start_at,s.planned_end_at));
+  const actual=Math.max(0,minutesBetween(s.start_at,s.end_at));
+  const durationOk=actual>=Math.max(10,planned*0.5)&&actual<=planned+120;
+  if(baseline&&durationOk){
+    return {state:'auto_verified',reason:(prefix?prefix+': ':'')+'서버시각·위치·수업시간 자동검증 통과'};
+  }
+  const reasons=[];
+  if(!baseline) reasons.push('학교 기준 위치 미등록');
+  if(!durationOk) reasons.push('실제 활동시간 확인');
+  return {state:'review_required',reason:(prefix?prefix+': ':'')+(reasons.join(' / ')||'자동검증 조건 확인 필요')};
 }
 
 function getRoles(){
@@ -1310,20 +1345,43 @@ async function pageV13Handoff(){
 async function exportV13Handoff(){
   const ym=document.getElementById('v13-handoff-month')?.value||seoulDate().slice(0,7);
   if(!/^\d{4}-\d{2}$/.test(ym)){toast('대상 월을 확인해 주세요.');return;}
+  let sessions=[];
   if(state.demo){
-    toast('실제 로그인 환경에서 연계파일을 만들 수 있습니다.','warning');
-    return;
+    sessions=state.sessions
+      .filter(s=>s.session_status==='completed'&&String(s.work_date||'').startsWith(ym))
+      .map(s=>{
+        const plan=DEMO.plans.find(p=>p.id===s.schedule_plan_id);
+        const matching=DEMO.matchingAssignments?.find(a=>a.id===s.assignment_id);
+        return {
+          id:s.id,
+          legacy_matching_id:matching?.legacy_matching_id||'',
+          work_date:s.work_date,
+          planned_start_at:s.planned_start_at,
+          planned_end_at:s.planned_end_at,
+          start_at:s.start_at,
+          end_at:s.end_at,
+          kind:matching?.kind||plan?.assignment?.kind||'coach',
+          topic:'데모 실적',
+          content:'V14 E2E 연계 검증',
+          place:plan?.place||'',
+          verification_state:s.verification_state,
+          verification_reason:s.verification_reason||'',
+          settlement_state:s.settlement_state
+        };
+      })
+      .filter(s=>s.legacy_matching_id);
+  }else{
+    const from=ym+'-01', to=monthLastDay(ym);
+    const {data,error}=await state.client
+      .from('v13_session_projection')
+      .select('*')
+      .gte('work_date',from)
+      .lte('work_date',to)
+      .order('work_date',{ascending:true})
+      .order('start_at',{ascending:true});
+    if(error){toast(error.message);return;}
+    sessions=data||[];
   }
-  const from=ym+'-01', to=monthLastDay(ym);
-  const {data,error}=await state.client
-    .from('v13_session_projection')
-    .select('*')
-    .gte('work_date',from)
-    .lte('work_date',to)
-    .order('work_date',{ascending:true})
-    .order('start_at',{ascending:true});
-  if(error){toast(error.message);return;}
-  const sessions=data||[];
   if(!sessions.length){toast('선택한 월의 완료 실적이 없습니다.','warning');return;}
   const payload={
     schema:'cb-edu-clinic-v14-v13-projection-v1',
@@ -1363,25 +1421,75 @@ function sessionRows(rows){
       +verificationLabel(s.verification_state)+'</div></div>';
   }).join('')+'</div>';
 }
+function verificationAuditLabel(action){
+  const labels={
+    verification_auto_verified:'자동 재검증 통과',
+    verification_confirmed:'확인 완료',
+    verification_rejected:'반려',
+    verification_returned_to_review:'다시 검토',
+    verification_review_required:'확인 필요',
+    verification_changed:'검증상태 변경',
+    settlement_approved:'지급 승인',
+    settlement_paid:'지급 완료',
+    settlement_changed:'정산상태 변경'
+  };
+  return labels[action]||action||'처리';
+}
+function verificationAuditHtml(rows){
+  if(!rows||!rows.length) return '<div class="tiny muted" style="margin-top:8px">아직 별도 처리 이력이 없습니다.</div>';
+  return '<div style="margin-top:10px;padding-top:10px;border-top:1px solid #e5e7eb">'
+    +'<div class="tiny" style="font-weight:700;margin-bottom:5px">최근 처리이력</div>'
+    +rows.slice(0,4).map(a=>{
+      const d=a.detail||{};
+      const reason=d.to_reason||d.reason||'';
+      const when=a.created_at?new Date(a.created_at).toLocaleString('ko-KR'):'';
+      const actor=a.actor?.display_name||'시스템';
+      return '<div class="tiny muted" style="margin:3px 0">• '+esc(verificationAuditLabel(a.action))
+        +' · '+esc(actor)+' · '+esc(when)+(reason?' · '+esc(reason):'')+'</div>';
+    }).join('')+'</div>';
+}
+async function loadVerificationAudits(sessionIds){
+  if(!sessionIds.length) return {};
+  if(state.demo){
+    const by={};
+    DEMO.auditLogs
+      .filter(a=>a.entity_type==='session'&&sessionIds.includes(a.entity_id))
+      .forEach(a=>{(by[a.entity_id]||(by[a.entity_id]=[])).push(a);});
+    return by;
+  }
+  if(!state.client) return {};
+  const q=await state.client.from('audit_logs')
+    .select('action,entity_id,detail,created_at,actor:profiles!audit_logs_actor_id_fkey(display_name)')
+    .eq('entity_type','session')
+    .in('entity_id',sessionIds)
+    .order('created_at',{ascending:false});
+  if(q.error){ console.warn('verification audit load failed',q.error); return {}; }
+  const by={};
+  (q.data||[]).forEach(a=>{ (by[a.entity_id]||(by[a.entity_id]=[])).push(a); });
+  return by;
+}
 async function pageExceptions(){
-  const editable=state.sessions.filter(s=>s.session_status==='completed'&&s.settlement_state==='pending'&&['pending','auto_verified','review_required','confirmed','rejected'].includes(s.verification_state));
+  const editable=state.sessions.filter(s=>s.session_status==='completed'&&s.settlement_state==='pending'&&['pending','review_required','confirmed','rejected'].includes(s.verification_state));
   const waiting=editable.filter(s=>s.verification_state==='pending'||s.verification_state==='review_required');
-  const decided=editable.filter(s=>s.verification_state==='auto_verified'||s.verification_state==='confirmed'||s.verification_state==='rejected');
+  const decided=editable.filter(s=>s.verification_state==='confirmed'||s.verification_state==='rejected');
+  const auditBy=await loadVerificationAudits(editable.map(s=>s.id));
 
   const waitingHtml=waiting.length
     ? '<div class="list">'+waiting.map(s=>'<div class="item"><div class="row between"><div><h3>'+esc(s.assignment?.supporter?.display_name||'지원단')+' · '+esc(s.student?.full_name||'학생')+'</h3><div class="meta">'
       +esc(s.work_date)+' · '+minutesBetween(s.start_at,s.end_at)+'분 · '+esc(s.verification_reason||'확인 필요')+'</div></div>'+verificationLabel(s.verification_state)+'</div>'
-      +'<div class="actions"><button class="btn btn-ghost" onclick="reverifySession(\''+s.id+'\')">자동 재검증</button><button class="btn btn-good" onclick="confirmSession(\''+s.id+'\')">확인 완료</button><button class="btn btn-danger" onclick="rejectSession(\''+s.id+'\')">반려</button></div></div>').join('')+'</div>'
+      +'<div class="actions"><button class="btn btn-ghost" onclick="reverifySession(\''+s.id+'\')">자동 재검증</button><button class="btn btn-good" onclick="confirmSession(\''+s.id+'\')">확인 완료</button><button class="btn btn-danger" onclick="rejectSession(\''+s.id+'\')">반려</button></div>'
+      +verificationAuditHtml(auditBy[s.id])+'</div>').join('')+'</div>'
     : '<div class="empty">현재 확인할 예외가 없습니다.</div>';
 
   const decidedHtml=decided.length
     ? '<div class="list">'+decided.map(s=>'<div class="item"><div class="row between"><div><h3>'+esc(s.assignment?.supporter?.display_name||'지원단')+' · '+esc(s.student?.full_name||'학생')+'</h3><div class="meta">'
       +esc(s.work_date)+' · '+minutesBetween(s.start_at,s.end_at)+'분 · '+esc(s.verification_reason||'')+'</div></div>'+verificationLabel(s.verification_state)+'</div>'
-      +'<div class="actions"><button class="btn btn-ghost" onclick="returnSessionToReview(\''+s.id+'\')">다시 검토</button></div></div>').join('')+'</div>'
+      +'<div class="actions"><button class="btn btn-ghost" onclick="returnSessionToReview(\''+s.id+'\')">다시 검토</button></div>'
+      +verificationAuditHtml(auditBy[s.id])+'</div>').join('')+'</div>'
     : '<div class="empty">지급승인 전 수정 가능한 처리 건이 없습니다.</div>';
 
   return '<div class="section-title">활동 확인 예외</div>'
-    +'<div class="notice">지급 승인 전까지 검증상태를 수정할 수 있습니다. 자동 재검증은 현재 저장된 학교 기준위치·GPS·수업시간으로 다시 계산합니다.</div>'
+    +'<div class="notice">지급 승인 전까지 검증상태를 수정할 수 있습니다. 자동 재검증은 현재 저장된 학교 기준위치·GPS·수업시간으로 다시 계산하며 처리 이력은 자동 기록됩니다.</div>'
     +'<div class="section-title" style="margin-top:18px">확인 필요</div>'+waitingHtml
     +'<div class="section-title" style="margin-top:18px">처리 완료 · 수정 가능</div>'+decidedHtml;
 }
@@ -1430,7 +1538,7 @@ async function pageSettings(){
   const s=state.settings||DEMO.settings;
   let schools=[];
   if(state.demo){
-    schools=[{id:'demo-school',name:'V14 테스트학교',latitude:null,longitude:null,radius_m:null}];
+    schools=DEMO.schools;
   }else{
     const q=await state.client.from('schools')
       .select('id,name,latitude,longitude,radius_m,active')
@@ -1480,6 +1588,14 @@ async function setSchoolCurrentLocation(schoolId,schoolName){
       if(!ok) return;
     }
     if(state.demo){
+      const sc=DEMO.schools.find(x=>x.id===schoolId);
+      if(!sc) throw new Error('학교를 찾을 수 없습니다.');
+      sc.latitude=loc.latitude; sc.longitude=loc.longitude;
+      demoAudit('school_baseline_changed','school',schoolId,{
+        school_name:sc.name,
+        baseline_registered:true,
+        radius_m:sc.radius_m||state.settings?.default_location_radius_m||250
+      });
       toast('기준 위치가 등록되었습니다. (데모)');
       renderPage();
       return;
@@ -1508,6 +1624,7 @@ async function startLesson(planId){
         s={id:'sess-'+Date.now(),schedule_plan_id:planId,assignment_id:a.id,supporter_id:'demo-user',student_id:a.student.id,work_date:seoulDate(),planned_start_at:seoulDate()+'T'+p.planned_start+':00+09:00',planned_end_at:seoulDate()+'T'+p.planned_end+':00+09:00',start_at:new Date().toISOString(),end_at:null,session_status:'in_progress',verification_state:'pending',settlement_state:'pending'};
         DEMO.sessions.push(s);
       }else{s.start_at=s.start_at||new Date().toISOString();s.session_status='in_progress';}
+      demoAudit('session_start','session',s.id,{demo:true});
       await refreshData(); toast('수업 시작이 기록되었습니다.'); renderPage(); return;
     }
     const {error}=await state.client.rpc('start_session',{p_schedule_plan_id:planId,p_latitude:loc.latitude,p_longitude:loc.longitude,p_accuracy_m:loc.accuracy});
@@ -1520,8 +1637,14 @@ async function endLesson(sessionId){
     const loc=await getLocation();
     if(state.demo){
       const s=DEMO.sessions.find(x=>x.id===sessionId); if(!s) return;
-      s.end_at=new Date().toISOString();s.session_status='completed';s.verification_state='auto_verified';s.verification_reason='서버시각·위치·수업시간 자동검증 통과';
-      await refreshData();toast('수업 종료 및 자동검증이 완료되었습니다.');renderPage();return;
+      s.end_at=new Date().toISOString();s.session_status='completed';
+      const result=demoVerificationResult(s);
+      s.verification_state=result.state;s.verification_reason=result.reason;
+      demoAudit(result.state==='auto_verified'?'verification_auto_verified':'verification_review_required','session',s.id,{
+        from_state:'pending',to_state:result.state,to_reason:result.reason,settlement_state:s.settlement_state
+      });
+      demoAudit('session_end','session',s.id,{demo:true,verification:result.state});
+      await refreshData();toast(result.state==='auto_verified'?'수업 종료 및 자동검증이 완료되었습니다.':'수업은 저장되었고 확인이 필요한 항목이 있습니다.');renderPage();return;
     }
     const {data,error}=await state.client.rpc('end_session',{p_session_id:sessionId,p_latitude:loc.latitude,p_longitude:loc.longitude,p_accuracy_m:loc.accuracy});
     if(error) throw error;
@@ -1598,7 +1721,14 @@ async function requestScheduleChange(planId){
 async function reverifySession(id){
   if(state.demo){
     const s=DEMO.sessions.find(x=>x.id===id);
-    if(s){s.verification_state='auto_verified';s.verification_reason='관리자 재검증: 자동검증 통과';}
+    if(s){
+      const before=s.verification_state;
+      const result=demoVerificationResult(s,'관리자 재검증');
+      s.verification_state=result.state;s.verification_reason=result.reason;
+      demoAudit(result.state==='auto_verified'?'verification_auto_verified':'verification_review_required','session',s.id,{
+        from_state:before,to_state:result.state,to_reason:result.reason,settlement_state:s.settlement_state
+      });
+    }
     await refreshData();renderPage();return;
   }
   const {data,error}=await state.client.rpc('reverify_session',{p_session_id:id});
@@ -1611,9 +1741,14 @@ async function resolveSessionVerification(id,action,reason){
   if(state.demo){
     const s=DEMO.sessions.find(x=>x.id===id);
     if(!s)return;
+    const before=s.verification_state;
     if(action==='confirm'){s.verification_state='confirmed';s.verification_reason=reason||'담당자 확인 완료';}
     if(action==='reject'){s.verification_state='rejected';s.verification_reason=reason||'반려';}
     if(action==='review'){s.verification_state='review_required';s.verification_reason=reason||'담당자 재검토로 전환';}
+    const auditAction=action==='confirm'?'verification_confirmed':action==='reject'?'verification_rejected':'verification_returned_to_review';
+    demoAudit(auditAction,'session',s.id,{
+      from_state:before,to_state:s.verification_state,to_reason:s.verification_reason,settlement_state:s.settlement_state
+    });
     await refreshData();renderPage();return true;
   }
   const {data,error}=await state.client.rpc('resolve_session_verification',{
@@ -1641,7 +1776,14 @@ async function returnSessionToReview(id){
   await resolveSessionVerification(id,'review','담당자 재검토로 전환');
 }
 async function approveSession(id){
-  if(state.demo){const s=DEMO.sessions.find(x=>x.id===id);if(s)s.settlement_state='approved';await refreshData();renderPage();return;}
+  if(state.demo){
+    const s=DEMO.sessions.find(x=>x.id===id);
+    if(s){
+      const before=s.settlement_state;s.settlement_state='approved';
+      demoAudit('settlement_approved','session',s.id,{from_state:before,to_state:'approved',verification_state:s.verification_state});
+    }
+    await refreshData();renderPage();return;
+  }
   const {error}=await state.client.rpc('approve_session_payment',{p_session_id:id});
   if(error){toast(error.message);return;}await refreshData();renderPage();
 }
@@ -1649,7 +1791,15 @@ async function approveAll(){
   const ids=state.sessions.filter(s=>(s.verification_state==='auto_verified'||s.verification_state==='confirmed')&&s.settlement_state==='pending').map(s=>s.id);
   if(!ids.length)return;
   if(!confirm(ids.length+'건을 지급 승인하시겠습니까?'))return;
-  if(state.demo){DEMO.sessions.forEach(s=>{if(ids.includes(s.id))s.settlement_state='approved';});await refreshData();renderPage();return;}
+  if(state.demo){
+    DEMO.sessions.forEach(s=>{
+      if(ids.includes(s.id)){
+        const before=s.settlement_state;s.settlement_state='approved';
+        demoAudit('settlement_approved','session',s.id,{from_state:before,to_state:'approved',verification_state:s.verification_state});
+      }
+    });
+    await refreshData();renderPage();return;
+  }
   for(const id of ids){
     const {error}=await state.client.rpc('approve_session_payment',{p_session_id:id});
     if(error){toast(error.message);return;}
