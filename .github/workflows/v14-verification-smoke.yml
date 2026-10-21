@@ -85,6 +85,12 @@ jobs:
             await page.getByRole('button', { name: '다시 검토' }).click();
             await page.getByRole('button', { name: '자동 재검증' }).waitFor({ state: 'visible' });
 
+            // Production rule parity: automatic re-verification must not pass
+            // until the lesson's school baseline has been registered.
+            page.once('dialog', d => d.accept());
+            await page.evaluate(() => window.setSchoolCurrentLocation('demo-school-2','남당초등학교'));
+            await page.getByRole('button', { name: '자동 재검증' }).waitFor({ state: 'visible' });
+
             await page.getByRole('button', { name: '자동 재검증' }).click();
             await page.getByText('현재 확인할 예외가 없습니다.', { exact: true }).waitFor({ state: 'visible' });
 
